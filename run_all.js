@@ -86,7 +86,11 @@ async function launchBrowserContext() {
       headless: false,
       ...(braveExecutablePath ? { executablePath: braveExecutablePath } : {}),
       viewport: null,
-      args: ['--start-maximized'],
+      ignoreDefaultArgs: ['--enable-automation'],
+      args: [
+        '--start-maximized',
+        '--disable-blink-features=AutomationControlled',
+      ],  
     });
   } catch (err) {
     if (err && typeof err.message === 'string' && err.message.includes('ProcessSingleton')) {
