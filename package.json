@@ -1,0 +1,22 @@
+{
+  "name": "ai-automation",
+  "version": "1.0.0",
+  "description": "Playwright automation tool that sends questions to multiple AI chat websites",
+  "main": "run_all.js",
+  "scripts": {
+    "start": "node run_all.js",
+    "run": "node run_all.js",
+    "setup-login": "node setup_login.js",
+    "prepare": "npm install",
+    "check": "node --check run_all.js && node --check setup_login.js && node --check bots/chatgpt.js && node --check bots/gemini.js && node --check bots/perplexity.js && node --check bots/grok.js && node --check bots/meta.js",
+    "test": "npm run check"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "playwright": "^1.58.2",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
