@@ -85,6 +85,7 @@ async function launchBrowserContext() {
     return await chromium.launchPersistentContext(USER_DATA_DIR, {
       headless: false,
       ...(braveExecutablePath ? { executablePath: braveExecutablePath } : {}),
+      chromiumSandbox: process.platform === 'win32',
       viewport: null,
       ignoreDefaultArgs: ['--enable-automation'],
       args: [

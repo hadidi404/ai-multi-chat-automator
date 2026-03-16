@@ -6,9 +6,10 @@
   "scripts": {
     "start": "node run_all.js",
     "run": "node run_all.js",
+    "open-brave": "node open_brave_profile.js",
     "setup-login": "node setup_login.js",
     "prepare": "npm install",
-    "check": "node --check run_all.js && node --check setup_login.js && node --check bots/chatgpt.js && node --check bots/gemini.js && node --check bots/perplexity.js && node --check bots/grok.js && node --check bots/meta.js",
+    "check": "node --check run_all.js && node --check setup_login.js && node --check open_brave_profile.js && node --check bots/chatgpt.js && node --check bots/gemini.js && node --check bots/perplexity.js && node --check bots/grok.js && node --check bots/meta.js",
     "test": "npm run check"
   },
   "keywords": [],
