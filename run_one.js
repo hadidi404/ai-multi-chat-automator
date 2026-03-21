@@ -1,27 +1,43 @@
 'use strict';
 
-// playwright-extra wraps playwright and allows plugins such as stealth.
-// The stealth plugin patches browser properties (navigator.webdriver, chrome
-// runtime, plugins, etc.) that Cloudflare / Turnstile use to detect bots.
 const { chromium } = require('playwright-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 chromium.use(StealthPlugin());
 
 const path = require('path');
-
 const { readQuestions } = require('./utils/readQuestions');
 const { resolveBravePath } = require('./utils/resolveBravePath');
 const logger = require('./utils/logger');
 
-const BOTS = [
-  { label: 'ChatGPT',    bot: require('./bots/chatgpt') },
-  { label: 'Gemini',     bot: require('./bots/gemini') },
-  { label: 'Perplexity', bot: require('./bots/perplexity') },
-  { label: 'Grok',       bot: require('./bots/grok') },
-  { label: 'Meta AI',    bot: require('./bots/meta') },
-];
+const BOT_MAP = {
+  chatgpt: { label: 'ChatGPT', bot: require('./bots/chatgpt') },
+  gemini: { label: 'Gemini', bot: require('./bots/gemini') },
+  perplexity: { label: 'Perplexity', bot: require('./bots/perplexity') },
+  grok: { label: 'Grok', bot: require('./bots/grok') },
+  meta: { label: 'Meta AI', bot: require('./bots/meta') },
+};
 
 const USER_DATA_DIR = path.join(__dirname, 'user-data');
+
+function normalizeBotArg(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
+function getSelectedBot() {
+  const raw = process.argv[2];
+  const key = normalizeBotArg(raw);
+
+  if (!key || !BOT_MAP[key]) {
+    const available = Object.keys(BOT_MAP).join(', ');
+    logger.error(`Missing or invalid bot name. Use one of: ${available}`);
+    process.exit(1);
+  }
+
+  return BOT_MAP[key];
+}
 
 function bindSignalHandlers(context) {
   let isShuttingDown = false;
@@ -64,42 +80,6 @@ async function waitForBrowserToClose(browser) {
   });
 }
 
-async function runBotPipeline({ label, bot, page, questions }) {
-  logger.info(`\n[${label}] Starting ${questions.length} question(s)`);
-
-  if (typeof bot.open === 'function') {
-    try {
-      await bot.open(page);
-    } catch (err) {
-      logger.error(`[${label}] Failed to open target page: ${err.message}`);
-      await page.close().catch(() => {});
-      return { label, success: false, reason: 'open-failed' };
-    }
-  }
-
-  for (let qi = 0; qi < questions.length; qi++) {
-    const question = questions[qi];
-    logger.info(`[${label}] Question ${qi + 1}/${questions.length}`);
-    logger.debug(`[${label}] Prompt: ${question}`);
-
-    try {
-      await bot.run(page, question);
-    } catch (err) {
-      logger.error(`[${label}] Unexpected error: ${err.message}`);
-    }
-  }
-
-  logger.info(`[${label}] Completed`);
-  return { label, success: true };
-}
-
-/**
- * Launches Brave with the persistent automation profile.
- * If the profile is already locked by another Brave process, print a clear
- * message so the user knows how to recover safely.
- *
- * @returns {Promise<import('playwright').BrowserContext>}
- */
 async function launchBrowserContext() {
   try {
     const braveExecutablePath = resolveBravePath();
@@ -120,7 +100,7 @@ async function launchBrowserContext() {
       args: [
         '--start-maximized',
         '--disable-blink-features=AutomationControlled',
-      ],  
+      ],
     });
   } catch (err) {
     if (err && typeof err.message === 'string' && err.message.includes('ProcessSingleton')) {
@@ -134,6 +114,7 @@ async function launchBrowserContext() {
 }
 
 async function main() {
+  const selected = getSelectedBot();
   const questions = readQuestions();
 
   if (questions.length === 0) {
@@ -141,8 +122,10 @@ async function main() {
     process.exit(1);
   }
 
+  logger.info(`Selected bot: ${selected.label}`);
   logger.info(`Loaded ${questions.length} question(s).`);
   logger.info(`Starting persistent browser... (log level: ${logger.currentLevel})\n`);
+
   const context = await launchBrowserContext();
   const browser = context.browser();
   const unbindSignalHandlers = bindSignalHandlers(context);
@@ -155,31 +138,23 @@ async function main() {
       await existingPages[index].close().catch(() => {});
     }
 
-    const pages = [firstPage];
-    for (let i = 1; i < BOTS.length; i++) {
-      pages.push(await context.newPage());
+    if (typeof selected.bot.open === 'function') {
+      await selected.bot.open(firstPage);
     }
 
-    logger.info(`Running ${BOTS.length} AI bots in parallel...`);
+    for (let qi = 0; qi < questions.length; qi++) {
+      const question = questions[qi];
+      logger.info(`[${selected.label}] Question ${qi + 1}/${questions.length}`);
+      logger.debug(`[${selected.label}] Prompt: ${question}`);
 
-    const results = await Promise.allSettled(
-      BOTS.map((entry, index) =>
-        runBotPipeline({
-          label: entry.label,
-          bot: entry.bot,
-          page: pages[index],
-          questions,
-        })
-      )
-    );
-
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        logger.error(`[Parallel] Bot pipeline crashed: ${result.reason?.message || result.reason}`);
+      try {
+        await selected.bot.run(firstPage, question);
+      } catch (err) {
+        logger.error(`[${selected.label}] Unexpected error: ${err.message}`);
       }
     }
 
-    logger.info('\nAll questions have been sent to all bots.');
+    logger.info(`\n[${selected.label}] Finished.`);
     logger.info('The browser will stay open so the user can review the results.');
     logger.info('Close the browser window when you are done.');
 

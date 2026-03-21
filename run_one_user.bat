@@ -2,8 +2,18 @@
 setlocal
 cd /d %~dp0
 
-echo AI Automation Launcher
-echo ======================
+set BOT=%~1
+if "%BOT%"=="" (
+  echo [ERROR] Missing bot name.
+  echo Usage: run_one_user.bat chatgpt^|gemini^|perplexity^|grok^|meta
+  echo.
+  pause
+  exit /b 1
+)
+
+echo AI Automation Launcher (Single Bot)
+echo ==================================
+echo Bot: %BOT%
 
 where node >nul 2>&1
 if errorlevel 1 (
@@ -44,8 +54,8 @@ if not exist questions.txt (
   exit /b 1
 )
 
-echo Starting automation...
-call node run_all.js
+echo Starting single-bot automation...
+call node run_one.js %BOT%
 if errorlevel 1 (
   echo.
   echo [ERROR] Automation exited with an error.
