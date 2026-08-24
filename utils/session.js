@@ -7,10 +7,11 @@ const { chromium } = require('playwright-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 chromium.use(StealthPlugin());
 
+const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const { resolveBrowser } = require('./resolveBrowser');
+const { resolveBrowserForProfile } = require('./resolveBrowser');
 const logger = require('./logger');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,6 +25,24 @@ const USER_DATA_DIR = path.join(__dirname, '..', 'user-data');
 
 const NEVER_STOP = () => false;
 
+// Playwright's defaults include --use-mock-keychain and --password-store=basic,
+// which stop Chromium reaching the real OS credential store.
+//
+// That quietly destroys the whole point of a shared profile on macOS: Chrome
+// seals cookie values with a key kept in the keychain ("Chrome Safe Storage"),
+// so a browser running on a MOCK keychain derives a different key and cannot
+// read a single cookie the sign-in window wrote. Same browser, same profile,
+// every site still signed out.
+//
+// --enable-automation is dropped for the usual reason: it is the flag sites
+// look at to decide they are talking to a robot.
+//
+// On macOS both must go. Elsewhere only the mock keychain is worth dropping —
+// on Linux, --password-store=basic is what avoids a desktop keyring prompt.
+const IGNORED_DEFAULT_ARGS = process.platform === 'darwin'
+  ? ['--enable-automation', '--use-mock-keychain', '--password-store=basic']
+  : ['--enable-automation', '--use-mock-keychain'];
+
 /**
  * Launches the browser with the persistent automation profile.
  * If the profile is already locked by another window of the same browser,
@@ -33,10 +52,11 @@ const NEVER_STOP = () => false;
  */
 async function launchBrowserContext() {
   try {
-    const browser = resolveBrowser();
+    const browser = resolveBrowserForProfile(USER_DATA_DIR);
 
     if (browser) {
-      logger.debug(`Using ${browser.name}:`, browser.path);
+      logger.info(`Using ${browser.name} — the browser this profile is signed in with.`);
+      logger.debug(`Executable: ${browser.path}`);
     } else {
       logger.warn('Neither Chrome nor Brave was found. Falling back to Playwright Chromium.');
       logger.warn('Set BROWSER_PATH to point at the browser you want to use.');
@@ -47,7 +67,7 @@ async function launchBrowserContext() {
       ...(browser ? { executablePath: browser.path } : {}),
       chromiumSandbox: process.platform === 'win32',
       viewport: null,
-      ignoreDefaultArgs: ['--enable-automation'],
+      ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
       args: [
         '--start-maximized',
         '--disable-blink-features=AutomationControlled',
@@ -63,7 +83,7 @@ async function launchBrowserContext() {
       || message.includes('Target page, context or browser has been closed');
 
     if (alreadyOpen) {
-      const name = (resolveBrowser() || { name: 'The browser' }).name;
+      const name = (resolveBrowserForProfile(USER_DATA_DIR) || { name: 'The browser' }).name;
       logger.error(`\n${name} is already running, so the automation cannot start.`);
 
       if (process.platform === 'darwin') {
@@ -96,11 +116,16 @@ async function launchBrowserContext() {
  * @returns {{ child: import('child_process').ChildProcess, browserName: string }}
  */
 function openProfileWindow(urls) {
-  const browser = resolveBrowser();
+  // Same resolver as the automation, so signing in and running questions can
+  // never end up on different browsers — which would leave every saved cookie
+  // sealed with a key the other one cannot read.
+  const browser = resolveBrowserForProfile(USER_DATA_DIR);
 
   if (!browser) {
     throw new Error('Could not find Chrome or Brave. Install one of them, or set BROWSER_PATH to your browser.');
   }
+
+  logger.info(`Signing in through ${browser.name}, matching the automation profile.`);
 
   const child = spawn(
     browser.path,
@@ -112,6 +137,47 @@ function openProfileWindow(urls) {
   logger.info(`Opened ${browser.name} with the automation profile for sign-in.`);
 
   return { child, browserName: browser.name };
+}
+
+/**
+ * Whether a browser currently holds the automation profile.
+ *
+ * Chromium leaves a SingletonLock symlink pointing at "<hostname>-<pid>", so a
+ * live pid means a window is still open on it. Returns null on Windows, which
+ * uses a different lock this cannot read — there the caller falls back to
+ * watching the process it spawned.
+ *
+ * Needed because a spawned browser does not always stay attached to the process
+ * we started: it can hand off to an existing instance, or (on macOS) keep
+ * running with every window closed.
+ *
+ * @returns {boolean | null}
+ */
+function isProfileInUse() {
+  if (process.platform === 'win32') {
+    return null;
+  }
+
+  let pid = 0;
+
+  try {
+    const target = fs.readlinkSync(path.join(USER_DATA_DIR, 'SingletonLock'));
+    pid = Number(String(target).split('-').pop());
+  } catch {
+    return false;
+  }
+
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    // Signal 0 tests for the process without touching it.
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -335,6 +401,7 @@ async function startRun({ bots, questions, primer = '', shouldStop = NEVER_STOP,
 }
 
 module.exports = {
+  isProfileInUse,
   launchBrowserContext,
   openProfileWindow,
   openSites,

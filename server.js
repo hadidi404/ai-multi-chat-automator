@@ -21,7 +21,7 @@ const { exec } = require('child_process');
 
 const { listBots, resolveBots, allKeys, loginSites } = require('./bots');
 const { setManualStepHandler } = require('./utils/pauseController');
-const { openProfileWindow, startRun } = require('./utils/session');
+const { isProfileInUse, openProfileWindow, startRun } = require('./utils/session');
 const { COLUMNS, buildRow, buildPendingRow } = require('./utils/analysis');
 const { buildPrimer } = require('./utils/summaryPrompt');
 const drive = require('./utils/drive');
@@ -109,6 +109,12 @@ function broadcastResults() {
   broadcast({ type: 'results', columns: COLUMNS, rows: resultRows });
 }
 
+/**
+ * The detached sign-in window, while one is open. It holds the same profile
+ * directory the automation uses, so a run cannot start until it is gone.
+ */
+let loginChild = null;
+
 function snapshot() {
   return {
     type: 'state',
@@ -116,7 +122,10 @@ function snapshot() {
     message: state.message,
     bots: state.bots,
     startedAt: state.startedAt,
-    browserOpen: Boolean(activeContext),
+    // Either kind of window counts: the automation's Playwright context, or the
+    // detached window opened for signing in. The UI hangs its "Close browser" /
+    // "I am done logging in" button off this.
+    browserOpen: Boolean(activeContext || loginChild),
     waiting: [...pendingManualSteps.entries()].map(([label, entry]) => ({
       label,
       message: entry.message,
@@ -180,12 +189,6 @@ function isBusy() {
 }
 
 /**
- * The detached sign-in window, while one is open. It holds the same profile
- * directory the automation uses, so a run cannot start until it is gone.
- */
-let loginChild = null;
-
-/**
  * Takes ownership of a freshly launched context: remembers it, and resets the
  * app to idle when the window goes away (whether the user closed it by hand or
  * we closed it for them).
@@ -241,24 +244,78 @@ async function beginLogin() {
     loginChild = child;
 
     child.once('exit', () => {
-      if (loginChild !== child) {
-        return;
+      if (loginChild === child) {
+        finishLogin();
       }
-
-      loginChild = null;
-      setState({ status: 'idle', message: 'Logins saved. You can run your questions now.', bots: [] });
     });
 
-    logger.info(`[web] Sign in to each tab in the ${browserName} window, then close it.`);
+    // The spawned process is not a reliable signal on its own: the browser can
+    // hand off to an instance we did not start, and on macOS closing every
+    // window leaves it running. Watching the profile lock catches both.
+    watchProfileLock();
+
+    const quitHint = process.platform === 'darwin'
+      ? `quit ${browserName} completely (Cmd+Q)`
+      : `close every ${browserName} window`;
+
+    logger.info(`[web] Sign in to each tab, then ${quitHint}.`);
     setState({
       status: 'login',
-      message: `Sign in to each tab in the ${browserName} window, then close that window.`,
+      message: `Sign in to each tab, then ${quitHint} — or click "I am done logging in".`,
     });
   } catch (err) {
     const friendly = friendlyLaunchError(err);
     logger.error(`[web] Login setup failed: ${friendly}`);
     setState({ status: 'error', message: friendly });
   }
+}
+
+/** Ends the sign-in phase once, whichever signal noticed the browser is gone. */
+function finishLogin() {
+  if (state.status !== 'login') {
+    return;
+  }
+
+  loginChild = null;
+  setState({ status: 'idle', message: 'Logins saved. You can run your questions now.', bots: [] });
+}
+
+/**
+ * Polls the profile lock until the sign-in browser lets go of it.
+ *
+ * Only concludes it closed after having seen it held: the lock takes a moment
+ * to appear, and calling the sign-in finished before the window even opens
+ * would be worse than waiting.
+ */
+function watchProfileLock() {
+  let sawLock = false;
+
+  const timer = setInterval(() => {
+    if (state.status !== 'login') {
+      clearInterval(timer);
+      return;
+    }
+
+    const inUse = isProfileInUse();
+
+    if (inUse === null) {
+      clearInterval(timer);
+      return;
+    }
+
+    if (inUse) {
+      sawLock = true;
+      return;
+    }
+
+    if (sawLock) {
+      clearInterval(timer);
+      finishLogin();
+    }
+  }, 2_000);
+
+  // Never let this keep the server alive on its own.
+  timer.unref();
 }
 
 /**

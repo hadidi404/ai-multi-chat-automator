@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const logger = require('./logger');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Browser discovery
 //
@@ -14,6 +16,14 @@ const path = require('path');
 //
 // An explicit BROWSER_PATH always wins — for a portable install, a Chromium
 // fork, or a second Chrome channel.
+//
+// ONE PROFILE, ONE BROWSER:
+//   That preference only applies to a profile nobody has signed in to yet.
+//   Chromium seals cookie values with a key held in the OS keychain under a
+//   name unique to the browser ("Chrome Safe Storage" vs "Brave Safe Storage"),
+//   so pointing a different browser at an existing profile leaves every cookie
+//   undecryptable — the rows are all still there and every site acts signed
+//   out. Once a profile has an owner, we keep using it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -135,4 +145,123 @@ function resolveBrowser() {
   return null;
 }
 
-module.exports = { resolveBrowser };
+/** Remembers which browser owns a profile, so later runs cannot drift. */
+const PIN_FILE = '.browser';
+
+/**
+ * Which browser created an existing profile, or '' for a fresh one.
+ *
+ * Prefers the pin we wrote ourselves; falls back to sniffing, because profiles
+ * predating the pin still need to be recognised. Brave stamps its own keys
+ * through Local State, and the singleton socket points into a
+ * com.brave.Browser / com.google.Chrome temp directory.
+ *
+ * @param {string} userDataDir
+ * @returns {string}
+ */
+function profileOwner(userDataDir) {
+  try {
+    const pinned = fs.readFileSync(path.join(userDataDir, PIN_FILE), 'utf-8').trim();
+
+    if (pinned) {
+      return pinned;
+    }
+  } catch {
+    // No pin yet — fall through and sniff.
+  }
+
+  try {
+    if (!fs.existsSync(path.join(userDataDir, 'Default'))) {
+      return '';
+    }
+  } catch {
+    return '';
+  }
+
+  try {
+    const socket = fs.readlinkSync(path.join(userDataDir, 'SingletonSocket'));
+
+    if (socket.includes('com.brave.Browser')) {
+      return 'Brave';
+    }
+
+    if (socket.includes('com.google.Chrome')) {
+      return 'Chrome';
+    }
+  } catch {
+    // No socket (clean shutdown, or Windows) — try Local State instead.
+  }
+
+  try {
+    const localState = fs.readFileSync(path.join(userDataDir, 'Local State'), 'utf-8');
+    return localState.includes('"brave"') ? 'Brave' : 'Chrome';
+  } catch {
+    return '';
+  }
+}
+
+/** Records the owner so the next launch does not have to sniff. */
+function pinProfileOwner(userDataDir, name) {
+  try {
+    fs.mkdirSync(userDataDir, { recursive: true });
+    fs.writeFileSync(path.join(userDataDir, PIN_FILE), `${name}\n`, 'utf-8');
+  } catch {
+    // Not worth failing a run over; sniffing still works next time.
+  }
+}
+
+/**
+ * The browser to use for a given profile — the ONLY resolver callers should
+ * use, so signing in and running questions can never pick different browsers.
+ *
+ * A profile with an owner keeps it. A fresh profile takes the preferred
+ * browser and is pinned to it.
+ *
+ * @param {string} userDataDir
+ * @returns {{ path: string, name: string, owner: string } | null}
+ */
+function resolveBrowserForProfile(userDataDir) {
+  const owner = profileOwner(userDataDir);
+  const preferred = resolveBrowser();
+
+  if (!owner) {
+    if (preferred) {
+      pinProfileOwner(userDataDir, preferred.name);
+    }
+
+    return preferred ? { ...preferred, owner: preferred.name } : null;
+  }
+
+  // An override is the user saying they know; honour it, but say what it costs.
+  if (process.env.BROWSER_PATH && preferred) {
+    if (preferred.name !== owner) {
+      logger.warn(`BROWSER_PATH overrides the profile's browser (${owner}). Saved logins will not carry over.`);
+    }
+
+    return { ...preferred, owner };
+  }
+
+  const ownerCandidates = owner === 'Brave' ? candidatesFor('brave') : candidatesFor('chrome');
+  const envPath = owner === 'Brave'
+    ? (process.env.BRAVE_PATH || process.env.BRAVE_EXECUTABLE_PATH)
+    : process.env.CHROME_PATH;
+
+  if (isExistingPath(envPath)) {
+    return { path: envPath, name: owner, owner };
+  }
+
+  for (const candidate of ownerCandidates) {
+    if (isExistingPath(candidate)) {
+      return { path: candidate, name: owner, owner };
+    }
+  }
+
+  // The owning browser is gone. Anything else can launch, but not read the
+  // cookies it left behind, so say so rather than looking mysteriously logged out.
+  logger.warn(`This profile was created by ${owner}, which is no longer installed.`);
+  logger.warn('Sign-ins saved by it cannot be read by another browser — you will need to sign in again.');
+
+  return preferred ? { ...preferred, owner } : null;
+}
+
+module.exports = { resolveBrowser, resolveBrowserForProfile, profileOwner };
