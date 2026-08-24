@@ -8,8 +8,9 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 chromium.use(StealthPlugin());
 
 const path = require('path');
+const { spawn } = require('child_process');
 
-const { resolveBravePath } = require('./resolveBravePath');
+const { resolveBrowser } = require('./resolveBrowser');
 const logger = require('./logger');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,26 +25,26 @@ const USER_DATA_DIR = path.join(__dirname, '..', 'user-data');
 const NEVER_STOP = () => false;
 
 /**
- * Launches Brave with the persistent automation profile.
- * If the profile is already locked by another Brave process, print a clear
- * message so the user knows how to recover safely.
+ * Launches the browser with the persistent automation profile.
+ * If the profile is already locked by another window of the same browser,
+ * print a clear message so the user knows how to recover safely.
  *
  * @returns {Promise<import('playwright').BrowserContext>}
  */
 async function launchBrowserContext() {
   try {
-    const braveExecutablePath = resolveBravePath();
+    const browser = resolveBrowser();
 
-    if (braveExecutablePath) {
-      logger.debug('Using Brave executable:', braveExecutablePath);
+    if (browser) {
+      logger.debug(`Using ${browser.name}:`, browser.path);
     } else {
-      logger.warn('Brave executable not found. Falling back to Playwright Chromium.');
-      logger.warn('Set BRAVE_PATH to force a custom Brave executable location.');
+      logger.warn('Neither Chrome nor Brave was found. Falling back to Playwright Chromium.');
+      logger.warn('Set BROWSER_PATH to point at the browser you want to use.');
     }
 
     return await chromium.launchPersistentContext(USER_DATA_DIR, {
       headless: false,
-      ...(braveExecutablePath ? { executablePath: braveExecutablePath } : {}),
+      ...(browser ? { executablePath: browser.path } : {}),
       chromiumSandbox: process.platform === 'win32',
       viewport: null,
       ignoreDefaultArgs: ['--enable-automation'],
@@ -57,17 +58,18 @@ async function launchBrowserContext() {
 
     // A Brave that is already open swallows the launch and hands back a dead
     // handle, so automation never gets a browser it can drive.
-    const braveAlreadyOpen = message.includes('Opening in existing browser session')
+    const alreadyOpen = message.includes('Opening in existing browser session')
       || message.includes('ProcessSingleton')
       || message.includes('Target page, context or browser has been closed');
 
-    if (braveAlreadyOpen) {
-      logger.error('\nBrave is already running, so the automation cannot start.');
+    if (alreadyOpen) {
+      const name = (resolveBrowser() || { name: 'The browser' }).name;
+      logger.error(`\n${name} is already running, so the automation cannot start.`);
 
       if (process.platform === 'darwin') {
-        logger.error('Quit Brave completely (Cmd+Q, or right-click its Dock icon and choose Quit), then try again.');
+        logger.error(`Quit ${name} completely (Cmd+Q, or right-click its Dock icon and choose Quit), then try again.`);
       } else {
-        logger.error('Close every Brave window, then try again.');
+        logger.error(`Close every ${name} window, then try again.`);
       }
 
       logger.error('If a previous run crashed, make sure its window is gone before relaunching.\n');
@@ -75,6 +77,41 @@ async function launchBrowserContext() {
 
     throw err;
   }
+}
+
+/**
+ * Opens the automation profile in an ORDINARY browser window — no Playwright,
+ * no DevTools protocol, no automation flags.
+ *
+ * This is how signing in has to work. Google refuses a password on a browser it
+ * can tell is automated ("this browser or app may not be secure"), and every
+ * Playwright launch is detectable however much the flags are cleaned up. Same
+ * profile directory, so a session saved here is the session the automation
+ * finds later.
+ *
+ * The window is detached and outlives this process: closing it is the user's
+ * job, and that is also what flushes the cookies to disk.
+ *
+ * @param {string[]} urls
+ * @returns {{ child: import('child_process').ChildProcess, browserName: string }}
+ */
+function openProfileWindow(urls) {
+  const browser = resolveBrowser();
+
+  if (!browser) {
+    throw new Error('Could not find Chrome or Brave. Install one of them, or set BROWSER_PATH to your browser.');
+  }
+
+  const child = spawn(
+    browser.path,
+    [`--user-data-dir=${USER_DATA_DIR}`, '--start-maximized', ...urls],
+    { detached: true, stdio: 'ignore' }
+  );
+
+  child.unref();
+  logger.info(`Opened ${browser.name} with the automation profile for sign-in.`);
+
+  return { child, browserName: browser.name };
 }
 
 /**
@@ -299,6 +336,7 @@ async function startRun({ bots, questions, primer = '', shouldStop = NEVER_STOP,
 
 module.exports = {
   launchBrowserContext,
+  openProfileWindow,
   openSites,
   startRun,
 };

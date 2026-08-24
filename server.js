@@ -21,7 +21,7 @@ const { exec } = require('child_process');
 
 const { listBots, resolveBots, allKeys, loginSites } = require('./bots');
 const { setManualStepHandler } = require('./utils/pauseController');
-const { launchBrowserContext, openSites, startRun } = require('./utils/session');
+const { openProfileWindow, startRun } = require('./utils/session');
 const { COLUMNS, buildRow, buildPendingRow } = require('./utils/analysis');
 const { buildPrimer } = require('./utils/summaryPrompt');
 const drive = require('./utils/drive');
@@ -180,6 +180,12 @@ function isBusy() {
 }
 
 /**
+ * The detached sign-in window, while one is open. It holds the same profile
+ * directory the automation uses, so a run cannot start until it is gone.
+ */
+let loginChild = null;
+
+/**
  * Takes ownership of a freshly launched context: remembers it, and resets the
  * app to idle when the window goes away (whether the user closed it by hand or
  * we closed it for them).
@@ -203,8 +209,13 @@ function adoptContext(context) {
 }
 
 /**
- * Opens every AI site in one window so the user can sign in to each of them.
+ * Opens every AI site in one ordinary browser window so the user can sign in.
  * The logins are written into ./user-data and reused by every later run.
+ *
+ * Deliberately NOT a Playwright window. Google rejects a password typed into a
+ * browser it detects as automated, which is every Playwright launch no matter
+ * how the flags are cleaned up, so signing in has to happen in a plain window
+ * pointed at the same profile.
  */
 async function beginLogin() {
   const sites = loginSites();
@@ -220,17 +231,30 @@ async function beginLogin() {
   logger.info(`\n[web] Login setup: opening ${sites.length} site(s)`);
 
   try {
-    const context = await launchBrowserContext();
-    adoptContext(context);
-    await openSites(context, sites);
+    // Google first: signing in there is what unlocks "Continue with Google" on
+    // the AI sites, and it is the one that refuses an automated browser.
+    const { child, browserName } = openProfileWindow([
+      'https://accounts.google.com/',
+      ...sites.map((site) => site.url),
+    ]);
 
-    logger.info('[web] Sign in to each tab, then click "I am done logging in".');
+    loginChild = child;
+
+    child.once('exit', () => {
+      if (loginChild !== child) {
+        return;
+      }
+
+      loginChild = null;
+      setState({ status: 'idle', message: 'Logins saved. You can run your questions now.', bots: [] });
+    });
+
+    logger.info(`[web] Sign in to each tab in the ${browserName} window, then close it.`);
     setState({
       status: 'login',
-      message: 'Sign in to each tab in the Brave window, then click "I am done logging in".',
+      message: `Sign in to each tab in the ${browserName} window, then close that window.`,
     });
   } catch (err) {
-    activeContext = null;
     const friendly = friendlyLaunchError(err);
     logger.error(`[web] Login setup failed: ${friendly}`);
     setState({ status: 'error', message: friendly });
@@ -444,6 +468,19 @@ async function closeBrowser() {
   stopRequested = true;
   rejectAllManualSteps('Browser closing');
 
+  // SIGTERM is how Chrome and Brave are asked to quit cleanly; anything harsher
+  // risks losing the very cookies the sign-in was for.
+  if (loginChild) {
+    const child = loginChild;
+    loginChild = null;
+
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // Already gone.
+    }
+  }
+
   if (activeContext) {
     await activeContext.close().catch(() => {});
     activeContext = null;
@@ -612,9 +649,9 @@ async function handleApi(req, res, pathname) {
       return;
     }
 
-    if (activeContext) {
+    if (activeContext || loginChild) {
       sendJson(res, 409, {
-        error: 'The previous browser window is still open. Close it before starting a new run.',
+        error: 'The browser window is still open. Close it before starting a new run.',
       });
       return;
     }
