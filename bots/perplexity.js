@@ -2,6 +2,8 @@
 
 const {
   clickFirstMatching,
+  readNewResponse,
+  snapshotResponses,
   typeIntoInput,
   waitForInputReady,
   waitForResponseToFinish,
@@ -45,6 +47,14 @@ const SELECTORS = {
     'button[aria-label="Stop"]',
     'button[aria-label*="Stop" i]',
   ],
+
+  // Blocks holding Perplexity's answers, most specific first.
+  // UPDATE THIS if the answers stop being read.
+  response: [
+    '[id^="markdown-content"]',
+    'div[class*="prose"]',
+    '.prose',
+  ],
 };
 
 const URL = 'https://www.perplexity.ai/';
@@ -54,14 +64,18 @@ async function open(page) {
 }
 
 /**
- * Sends a single question to Perplexity and waits for the response to finish.
+ * Sends a single question to Perplexity, waits for the answer, and reads it back.
  *
  * @param {import('playwright').Page} page
  * @param {string} question
+ * @returns {Promise<{ text: string, links: object[], ok: boolean }>}
  */
 async function run(page, question) {
   try {
     const inputSelector = await waitForInputReady(page, 'Perplexity', SELECTORS.input);
+
+    // Counted before sending so the answer can be scoped to THIS question.
+    const before = await snapshotResponses(page, SELECTORS.response);
 
     await typeIntoInput(page, inputSelector, question);
 
@@ -74,9 +88,13 @@ async function run(page, question) {
     }
 
     await waitForResponseToFinish(page, 'Perplexity', SELECTORS.stopButton);
+    return await readNewResponse(page, 'Perplexity', SELECTORS.response, before);
   } catch (err) {
     logger.error('[Perplexity] Error:', err.message);
+    return { text: '', links: [], ok: false, reason: err.message };
   }
 }
 
-module.exports = { open, run };
+// SELECTORS is exported so tools/inspect.js can probe them against the live
+// page without duplicating the list.
+module.exports = { open, run, url: URL, selectors: SELECTORS };

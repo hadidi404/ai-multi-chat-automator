@@ -1,0 +1,1269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Multi-Chat</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #e2e5ea;
+    --text: #16181d;
+    --muted: #6b7280;
+    --accent: #4f46e5;
+    --accent-text: #ffffff;
+    --ok: #128a5a;
+    --warn: #b45309;
+    --err: #c0392b;
+    --code-bg: #0f1115;
+    --code-text: #d7dbe2;
+    --radius: 10px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --border: #2a2f3a;
+      --text: #e7e9ee;
+      --muted: #939bab;
+      --accent: #6366f1;
+      --ok: #35c48c;
+      --warn: #e0a04a;
+      --err: #f0736a;
+      --code-bg: #0b0d11;
+      --code-text: #cfd4dd;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 24px 16px 48px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header { margin-bottom: 20px; }
+  h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  label.field { display: block; font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+  .hint { font-weight: 400; color: var(--muted); font-size: 13px; }
+
+  textarea {
+    width: 100%;
+    min-height: 150px;
+    resize: vertical;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+
+  .inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .sublabel { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; margin-left: 3px}
+  .req { font-weight: 400; color: var(--err); font-size: 12px; }
+  /* Inline marker in a label. Needs its own class: .inputs .hint below is
+     display:block, which would drop it onto its own line. */
+  .opt { font-weight: 400; color: var(--muted); font-size: 12px; }
+  input[type="text"] {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    margin-bottom: 6px;
+  }
+  input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input.invalid { border-color: var(--err); }
+  .inputs .hint { display: block; font-size: 12px; }
+
+  /* Results grid — mirrors the Google Sheet column for column */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0; text-align: left; }
+  th:last-child, td:last-child { border-right: none; }
+  th {
+    background: var(--bg);
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+  }
+  td input, td select {
+    width: 100%;
+    min-width: 110px;
+    border: none;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    padding: 7px 10px;
+  }
+  td input:focus, td select:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+  td.wide input { min-width: 240px; }
+  td select { cursor: pointer; }
+  tr.unread { background: color-mix(in srgb, var(--warn) 9%, transparent); }
+  tr.pending { opacity: .6; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+  /* Screenshot paste cell — on screen only, never exported */
+  th.shot, td.shot {
+    position: sticky; left: 0; z-index: 2;
+    background: var(--panel);
+    border-right: 2px solid var(--border);
+  }
+  th.shot { z-index: 3; }
+  .dropzone {
+    width: 104px; height: 58px; margin: 4px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    display: grid; place-items: center;
+    font-size: 11px; color: var(--muted);
+    cursor: pointer; text-align: center; overflow: hidden;
+    position: relative;
+  }
+  .dropzone:hover, .dropzone:focus { border-color: var(--accent); outline: none; }
+  .dropzone img { width: 100%; height: 100%; object-fit: cover; }
+  .dropzone.busy { border-style: solid; border-color: var(--accent); }
+  .dropzone.armed {
+    border-style: solid;
+    border-width: 2px;
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .dropzone.failed { border-color: var(--err); color: var(--err); }
+  tr.pending input::placeholder { font-style: italic; }
+
+  button {
+    font: inherit;
+    font-weight: 600;
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color .15s, transform .05s;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+
+  /* One button per AI */
+  .ai-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  button.ai {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    text-align: left;
+  }
+  button.ai .badge {
+    width: 30px; height: 30px; flex: none;
+    border-radius: 8px;
+    display: grid; place-items: center;
+    font-size: 14px; font-weight: 700;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent);
+  }
+  button.ai .name { flex: 1; }
+  button.ai[data-active="true"] { border-color: var(--accent); }
+  button.ai[data-active="true"] .badge { background: var(--accent); color: var(--accent-text); }
+
+  .run-all {
+    margin-top: 12px;
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+  }
+
+  .status { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.running { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  .dot.finished { background: var(--ok); }
+  .dot.error { background: var(--err); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+  .attention {
+    border-left: 3px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    padding: 12px 14px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+  }
+  .attention .who { font-weight: 700; }
+  .attention p { margin: 4px 0 10px; font-size: 13px; color: var(--muted); }
+
+  .progress { display: grid; gap: 8px; }
+  .prog-row { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .prog-name { width: 100px; flex: none; font-weight: 600; }
+  .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s ease; }
+  .prog-meta { width: 92px; flex: none; text-align: right; color: var(--muted); font-size: 12px; }
+
+  pre.log {
+    margin: 0;
+    background: var(--code-bg);
+    color: var(--code-text);
+    border-radius: 8px;
+    padding: 12px;
+    height: 240px;
+    overflow: auto;
+    font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log .warn { color: #e0a04a; }
+  .log .error { color: #f0736a; }
+  .log .debug { color: #8891a0; }
+
+  .foot { color: var(--muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>AI Multi-Chat</h1>
+    <p class="sub">Type your questions, then pick one AI — or send them to all of them at once.</p>
+  </header>
+
+  <div class="card">
+    <label class="field">Step 1 — sign in <span class="hint">— only needed the first time, or if an AI logs you out</span></label>
+    <div class="row">
+      <button id="login">Log in to the AIs</button>
+      <span class="hint">Opens all 5 sites in one window so you can sign in. Your logins are saved for next time.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="field">Step 2 — who are we tracking?</label>
+    <div class="inputs">
+      <div>
+        <label class="sublabel" for="clientName">Client name <span class="req">required</span></label>
+        <input id="clientName" type="text" placeholder="Acme Bakery" autocomplete="off">
+        <span class="hint">Used to decide Branded vs Non-Branded, and whether they appeared in the answer.</span>
+      </div>
+      <div>
+        <label class="sublabel" for="clientSite">Client website <span class="opt">optional</span></label>
+        <input id="clientSite" type="text" placeholder="acmebakery.com" autocomplete="off">
+        <span class="hint">Makes "Cited with link" accurate instead of guessing from the name.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="field" for="questions">
+      Step 3 — your questions <span class="hint">— one per line</span>
+    </label>
+    <textarea id="questions" placeholder="Place your questions here...&#10;"></textarea>
+    <div class="row" style="margin-top:10px">
+      <span class="hint" id="qcount">0 questions</span>
+      <span class="spacer"></span>
+      <span class="hint">Ctrl/Cmd + Enter runs all</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="field">Step 4 — send to one AI</label>
+    <div class="ai-grid" id="aiGrid"></div>
+
+    <label class="field" style="margin:18px 0 8px">Or send to every AI</label>
+    <button class="primary run-all" id="runAll">Run all AIs</button>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="stop" disabled>Stop</button>
+      <button id="close" hidden>Close browser</button>
+      <span class="spacer"></span>
+      <span class="status"><span class="dot" id="dot"></span><span id="statusText">Ready</span></span>
+    </div>
+  </div>
+
+  <div class="card" id="attentionCard" hidden>
+    <label class="field">Needs you</label>
+    <div id="attention"></div>
+  </div>
+
+  <div class="card" id="progressCard" hidden>
+    <label class="field">Progress</label>
+    <div class="progress" id="progress"></div>
+  </div>
+
+  <div class="card" id="driveCard">
+    <div class="row" style="margin-bottom:8px">
+      <label class="field" style="margin:0">Screenshot links</label>
+      <span class="spacer"></span>
+      <span class="status"><span class="dot" id="driveDot"></span><span class="hint" id="driveState">Not set up</span></span>
+      <button class="link" id="driveToggle">Automatic upload (optional)</button>
+    </div>
+    <p class="hint" style="margin:0 0 6px">
+      <strong>Nothing to set up.</strong> Upload your screenshots to your own Drive folder as usual, then in
+      Drive use <strong>Share → Copy link</strong> on a picture and paste it into that row&rsquo;s
+      <strong>Screenshot</strong> box on the left. The Screenshot Link column becomes a clickable
+      <strong>HERE</strong>.
+    </p>
+    <p class="hint" style="margin:0">
+      Make sure the folder or file is shared as <strong>Anyone with the link</strong>, or teammates
+      opening the sheet will not be able to see the picture.
+    </p>
+
+    <div id="driveSetup" hidden style="margin-top:14px">
+      <div id="driveDevSetup">
+      <p class="hint" style="margin:0 0 10px">
+        <strong>One-time setup, done by whoever set this tool up</strong> &mdash; not by everyday users.
+        Create the OAuth app once, save <span class="mono">drive-client.json</span> into this folder, and
+        everyone you share the folder with only has to click Connect.
+      </p>
+      <ol class="hint" style="margin:0 0 14px; padding-left:20px; line-height:1.9">
+        <li>Sign in to <span class="mono">console.cloud.google.com</span> with your work account → create a project</li>
+        <li>APIs &amp; Services → Library → enable <strong>Google Drive API</strong></li>
+        <li>APIs &amp; Services → OAuth consent screen → User type
+            <strong>Internal</strong>
+            <span class="opt">— important: this is what keeps everyone signed in permanently</span></li>
+        <li>Credentials → Create credentials → <strong>OAuth client ID</strong> → type <strong>Desktop app</strong></li>
+        <li>Paste the Client ID and Secret below and click Save and connect</li>
+      </ol>
+      <p class="hint" style="margin:0 0 14px">
+        Saving writes <span class="mono">drive-client.json</span> into this folder. Include that file when
+        you copy the folder to colleagues and they will only see a folder box and a Connect button.
+      </p>
+      <div class="inputs">
+        <div>
+          <label class="sublabel" for="driveClientId">Client ID</label>
+          <input id="driveClientId" type="text" placeholder="1234-abc.apps.googleusercontent.com" autocomplete="off">
+        </div>
+        <div>
+          <label class="sublabel" for="driveClientSecret">Client Secret</label>
+          <input id="driveClientSecret" type="password" placeholder="GOCSPX-…" autocomplete="off">
+        </div>
+      </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <label class="sublabel" for="driveFolder">Your Drive folder link</label>
+        <input id="driveFolder" type="text" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off">
+        <span class="hint">Open your folder in Drive and copy the URL from the address bar.</span>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="driveConnect">Save and connect</button>
+        <button id="driveDisconnect" hidden>Disconnect</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="resultsCard" hidden>
+    <div class="row" style="margin-bottom:12px">
+      <label class="field" style="margin:0">Results for the sheet</label>
+      <span class="hint" id="rowCount"></span>
+      <span class="spacer"></span>
+      <button class="primary" id="copyRows">Copy for Google Sheets</button>
+      <button id="downloadRows">Download .csv</button>
+      <button id="clearRows">Clear rows</button>
+    </div>
+    <p class="hint" style="margin:0 0 10px">
+      Columns match your sheet exactly. Click <strong>Copy</strong>, then click the first empty cell
+      under <em>Date Checked</em> in Google Sheets and paste — the header row is not included.
+      Any cell can be edited first, and your edits are kept. Rows are saved in this browser and
+      build up across runs until you clear them.
+    </p>
+    <div class="table-scroll">
+      <table id="resultsTable">
+        <thead><tr id="resultsHead"></tr></thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <label class="field" style="margin:0">Activity</label>
+      <span class="spacer"></span>
+      <label class="hint" style="cursor:pointer"><input type="checkbox" id="verbose"> show details</label>
+    </div>
+    <pre class="log" id="log"></pre>
+  </div>
+
+  <p class="foot">Runs entirely on this computer. Nothing is uploaded anywhere.</p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    questions: $('questions'), qcount: $('qcount'), aiGrid: $('aiGrid'),
+    clientName: $('clientName'), clientSite: $('clientSite'),
+    login: $('login'), runAll: $('runAll'), stop: $('stop'), close: $('close'),
+    resultsCard: $('resultsCard'), resultsHead: $('resultsHead'), resultsBody: $('resultsBody'),
+    rowCount: $('rowCount'), copyRows: $('copyRows'), downloadRows: $('downloadRows'),
+    clearRows: $('clearRows'),
+    driveDot: $('driveDot'), driveState: $('driveState'), driveToggle: $('driveToggle'),
+    driveSetup: $('driveSetup'), driveClientId: $('driveClientId'),
+    driveClientSecret: $('driveClientSecret'), driveFolder: $('driveFolder'),
+    driveConnect: $('driveConnect'), driveDisconnect: $('driveDisconnect'),
+    dot: $('dot'), statusText: $('statusText'),
+    attentionCard: $('attentionCard'), attention: $('attention'),
+    progressCard: $('progressCard'), progress: $('progress'),
+    log: $('log'), verbose: $('verbose'),
+  };
+
+  const CLIENT_KEY = 'ai-multi-chat:client';
+  const ROWS_KEY = 'ai-multi-chat:rows';
+
+  // Columns the sheet expects a fixed answer for — rendered as dropdowns so a
+  // wrong auto-detection can be corrected before it reaches the spreadsheet.
+  const CHOICES = {
+    'Search Type': ['', 'Branded', 'Non-Branded'],
+    'Appeared in Output?': ['', 'Yes', 'No'],
+    Intent: ['', 'Cited with link', 'Mentioned', 'No link', 'Not Mentioned'],
+  };
+
+  const WIDE_COLUMNS = ['Prompt / Query Tested', 'AI Output Summary', 'Source Link Cited', 'Notes'];
+
+  let botList = [];
+  let driveStatus = { hasClient: false, connected: false, folderSet: false };
+  let resetLogOnNextEvent = false;
+  let resultColumns = [];
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+
+  const countQuestions = () =>
+    els.questions.value.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+
+  function updateCount() {
+    const n = countQuestions();
+    els.qcount.textContent = `${n} question${n === 1 ? '' : 's'}`;
+  }
+
+  async function post(url, body) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
+
+    return data;
+  }
+
+  function appendLog(entry) {
+    if (resetLogOnNextEvent) {
+      els.log.textContent = '';
+      resetLogOnNextEvent = false;
+    }
+
+    if (entry.level === 'debug' && !els.verbose.checked) {
+      return;
+    }
+
+    const line = document.createElement('span');
+    line.className = entry.level;
+    line.textContent = `${entry.message}\n`;
+    els.log.append(line);
+    els.log.scrollTop = els.log.scrollHeight;
+  }
+
+  // ── running ────────────────────────────────────────────────────────────────
+
+  async function run(botKeys) {
+    const clientName = els.clientName.value.trim();
+
+    // Without a client name, Search Type / Appeared / Intent cannot be filled
+    // in, and a sheet of blanks is worse than a clear prompt to enter it.
+    if (!clientName) {
+      els.clientName.classList.add('invalid');
+      els.clientName.focus();
+      appendLog({ level: 'error', message: 'Enter the client name first — the sheet columns depend on it.' });
+      return;
+    }
+
+    els.clientName.classList.remove('invalid');
+
+    if (countQuestions() === 0) {
+      els.questions.focus();
+      appendLog({ level: 'error', message: 'Type at least one question first.' });
+      return;
+    }
+
+    rememberClient();
+    setButtonsDisabled(true);
+    els.log.textContent = '';
+
+    try {
+      await post('/api/run', {
+        questions: els.questions.value,
+        bots: botKeys,
+        clientName,
+        clientSite: els.clientSite.value.trim(),
+      });
+    } catch (err) {
+      setButtonsDisabled(false);
+      appendLog({ level: 'error', message: err.message });
+    }
+  }
+
+  function rememberClient() {
+    try {
+      localStorage.setItem(CLIENT_KEY, JSON.stringify({
+        name: els.clientName.value.trim(),
+        site: els.clientSite.value.trim(),
+      }));
+    } catch { /* private mode — the client details just won't persist */ }
+  }
+
+  function restoreClient() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CLIENT_KEY) || '{}');
+      els.clientName.value = saved.name || '';
+      els.clientSite.value = saved.site || '';
+    } catch { /* nothing saved yet */ }
+  }
+
+  function setButtonsDisabled(disabled) {
+    els.runAll.disabled = disabled;
+    els.login.disabled = disabled;
+    els.aiGrid.querySelectorAll('button').forEach((button) => { button.disabled = disabled; });
+  }
+
+  async function login() {
+    setButtonsDisabled(true);
+    els.log.textContent = '';
+
+    try {
+      await post('/api/login');
+    } catch (err) {
+      setButtonsDisabled(false);
+      appendLog({ level: 'error', message: err.message });
+    }
+  }
+
+  // ── rendering ──────────────────────────────────────────────────────────────
+
+  function renderBots(bots) {
+    botList = bots;
+    els.aiGrid.innerHTML = '';
+
+    for (const bot of bots) {
+      const button = document.createElement('button');
+      button.className = 'ai';
+      button.dataset.label = bot.label;
+
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = bot.label.charAt(0);
+
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = bot.label;
+
+      button.append(badge, name);
+      button.addEventListener('click', () => run([bot.key]));
+      els.aiGrid.append(button);
+    }
+  }
+
+  // ── Google Drive panel ─────────────────────────────────────────────────────
+
+  function applyDrive(status) {
+    driveStatus = status;
+
+    const ready = status.connected && status.folderSet;
+    els.driveDot.className = `dot ${ready ? 'finished' : ''}`;
+    els.driveState.textContent = ready
+      ? 'Auto-upload on — paste a link or an image'
+      : status.connected
+        ? 'Connected, but no folder set'
+        : status.hasClient
+          ? 'Credentials saved — not connected yet'
+          : 'Paste Drive links (no setup needed)';
+
+    els.driveDisconnect.hidden = !status.connected;
+
+    // Credentials shipped with the app: the user never sees a Cloud Console.
+    const setupBlock = document.getElementById('driveDevSetup');
+    if (setupBlock) setupBlock.hidden = Boolean(status.preconfigured);
+    els.driveToggle.textContent = status.preconfigured
+      ? (els.driveSetup.hidden ? 'Connect Drive' : 'Hide')
+      : (els.driveSetup.hidden ? 'Automatic upload (optional)' : 'Hide');
+
+    if (status.folderId && !els.driveFolder.value) {
+      els.driveFolder.value = `https://drive.google.com/drive/folders/${status.folderId}`;
+    }
+
+    // Redraw the paste cells: they are disabled until Drive is ready.
+    els.resultsBody.querySelectorAll('.dropzone').forEach((zone) => {
+      // Leave alone anything mid-upload or showing an error — this runs on
+      // every Drive status event and would otherwise wipe the message the user
+      // just triggered.
+      if (!zone.dataset.link
+        && !zone.classList.contains('failed')
+        && !zone.classList.contains('busy')
+        && !zone.classList.contains('armed')) {
+        zone.textContent = ready ? 'paste link or image' : 'paste Drive link';
+      }
+    });
+  }
+
+  async function connectDrive() {
+    const clientId = els.driveClientId.value.trim();
+    const clientSecret = els.driveClientSecret.value.trim();
+
+    try {
+      if (clientId && clientSecret) {
+        applyDrive(await post('/api/drive/client', { clientId, clientSecret }));
+      }
+
+      if (els.driveFolder.value.trim()) {
+        applyDrive(await post('/api/drive/folder', { folder: els.driveFolder.value.trim() }));
+      }
+
+      if (!driveStatus.hasClient) {
+        appendLog({ level: 'error', message: 'Enter the Client ID and Client Secret first.' });
+        return;
+      }
+
+      // Opens Google's consent screen; the server catches the redirect.
+      await post('/api/drive/connect');
+      els.driveState.textContent = 'Waiting for you to approve in Google...';
+    } catch (err) {
+      appendLog({ level: 'error', message: err.message });
+    }
+  }
+
+  // ── screenshot paste ───────────────────────────────────────────────────────
+
+  function buildDropzone(row) {
+    const zone = document.createElement('div');
+    zone.className = 'dropzone';
+    zone.tabIndex = 0;
+    zone.title = 'Click to select this row, then paste your screenshot (Cmd/Ctrl+V)';
+
+    const ready = driveStatus.connected && driveStatus.folderSet;
+
+    if (row.shot && row.shot.link) {
+      zone.dataset.link = row.shot.link;
+      zone.textContent = '✓ linked';
+    } else {
+      // Pasting a Drive link needs no setup at all, so lead with that.
+      zone.textContent = ready ? 'paste link or image' : 'paste Drive link';
+    }
+
+    /** Writes the link into the row and shows it as done. */
+    const applyLink = (link, thumbnailFile) => {
+      // A bare URL pasted into Sheets is not clickable text; HYPERLINK is.
+      row.cells['Screenshot Link'] = `=HYPERLINK("${link}","HERE")`;
+      row.edited['Screenshot Link'] = true;
+      row.shot = { link };
+      saveRows();
+
+      const field = zone.closest('tr').querySelector('[data-column="Screenshot Link"]');
+      if (field) field.value = row.cells['Screenshot Link'];
+
+      zone.className = 'dropzone';
+      zone.dataset.link = link;
+      zone.innerHTML = '';
+
+      if (thumbnailFile) {
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(thumbnailFile);
+        zone.append(img);
+      } else {
+        zone.textContent = '✓ linked';
+      }
+    };
+
+    const send = async (file) => {
+      if (!driveStatus.connected || !driveStatus.folderSet) {
+        zone.className = 'dropzone failed';
+        zone.textContent = 'connect Drive first';
+        appendLog({
+          level: 'error',
+          message: 'Cannot upload yet — connect Google Drive and set your folder in the "Screenshot links" panel above.',
+        });
+        return;
+      }
+
+      zone.className = 'dropzone busy';
+      zone.textContent = 'uploading…';
+
+      // Name it after the row so the file is identifiable inside Drive.
+      const platform = (row.cells['AI Platform'] || 'ai').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const prompt = (row.cells['Prompt / Query Tested'] || 'question')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/^-|-$/g, '');
+      const name = `${platform}-${prompt}-${Date.now().toString(36)}.png`;
+
+      try {
+        const result = await fetch(`/api/drive/upload?name=${encodeURIComponent(name)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'image/png' },
+          body: file,
+        }).then(async (r) => {
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(data.error || `Upload failed (${r.status})`);
+          return data;
+        });
+
+        applyLink(result.link, file);
+      } catch (err) {
+        zone.className = 'dropzone failed';
+        zone.textContent = 'upload failed';
+        appendLog({ level: 'error', message: err.message });
+      }
+    };
+
+    zone.addEventListener('paste', (event) => {
+      const clipboard = event.clipboardData;
+      if (!clipboard) return;
+
+      // An image on the clipboard always means "upload this picture and link to
+      // IT". Check it first: a clipboard often carries a URL alongside an
+      // image, and taking that URL would link to whatever was copied last —
+      // typically the folder, not this screenshot.
+      const item = [...(clipboard.items || [])].find((i) => i.type.startsWith('image/'));
+
+      if (item) {
+        event.preventDefault();
+        send(item.getAsFile());
+        return;
+      }
+
+      // No image, so a pasted URL is someone linking a file they uploaded by hand.
+      const pastedText = (clipboard.getData('text') || '').trim();
+
+      if (/^https?:\/\//i.test(pastedText)) {
+        event.preventDefault();
+
+        if (/\/folders\//.test(pastedText)) {
+          zone.className = 'dropzone failed';
+          zone.textContent = 'that is a folder';
+          appendLog({
+            level: 'error',
+            message: 'That link points at the folder, not a picture. Either paste the screenshot image itself, or in Drive open the picture and use Share \u2192 Copy link on that file.',
+          });
+          return;
+        }
+
+        applyLink(pastedText, null);
+      }
+    });
+
+    // Clicking picks a file, for when the screenshot is already saved to disk.
+    zone.addEventListener('click', () => {
+      if (zone.dataset.link) {
+        window.open(zone.dataset.link, '_blank', 'noopener');
+        return;
+      }
+
+      // Arm the cell and wait: the browser only delivers a paste event to the
+      // focused element, so clicking is how you choose which row receives it.
+      zone.classList.remove('failed');
+      zone.classList.add('armed');
+      zone.textContent = 'paste now';
+      zone.focus();
+    });
+
+    zone.addEventListener('blur', () => {
+      if (!zone.classList.contains('armed')) {
+        return;
+      }
+
+      zone.classList.remove('armed');
+      zone.textContent = driveStatus.connected && driveStatus.folderSet
+        ? 'paste link or image'
+        : 'paste Drive link';
+    });
+
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); });
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (file && file.type.startsWith('image/')) send(file);
+    });
+
+    return zone;
+  }
+
+  // ── results grid ───────────────────────────────────────────────────────────
+  //
+  // The grid lives HERE, in the browser, not on the server. Rows are kept in
+  // `savedRows` and written to localStorage on every change, so they survive a
+  // page reload, a server restart, and closing the tab.
+  //
+  // Rows accumulate across runs — running ChatGPT and then Gemini leaves you
+  // with both sets ready to paste in one go. "Clear rows" empties them.
+  //
+  // Each row records which cells you edited by hand. Incoming server updates
+  // never overwrite those, so a correction made while a run is still going is
+  // not undone when the answer lands.
+
+  /** @type {{ id: string, status: string, cells: object, edited: object }[]} */
+  let savedRows = [];
+
+  function saveRows() {
+    try {
+      localStorage.setItem(ROWS_KEY, JSON.stringify({ columns: resultColumns, rows: savedRows }));
+    } catch {
+      // Quota or private mode — the grid still works for this session.
+    }
+  }
+
+  function loadRows() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(ROWS_KEY) || 'null');
+
+      if (saved && Array.isArray(saved.rows)) {
+        savedRows = saved.rows;
+        resultColumns = saved.columns || resultColumns;
+      }
+    } catch {
+      savedRows = [];
+    }
+  }
+
+  /**
+   * Folds a server update into the saved grid.
+   * New rows are appended; known rows have their un-edited cells refreshed.
+   */
+  function mergeResults(columns, rows) {
+    resultColumns = columns;
+
+    for (const incoming of rows) {
+      const existing = savedRows.find((row) => row.id === incoming.id);
+
+      if (!existing) {
+        savedRows.push({
+          id: incoming.id,
+          status: incoming.status,
+          cells: { ...incoming.cells },
+          edited: {},
+        });
+        continue;
+      }
+
+      existing.status = incoming.status;
+
+      for (const column of columns) {
+        if (!existing.edited[column]) {
+          existing.cells[column] = incoming.cells[column];
+        }
+      }
+    }
+
+    saveRows();
+    renderGrid();
+  }
+
+  function renderGrid() {
+    els.resultsCard.hidden = savedRows.length === 0;
+
+    if (savedRows.length === 0) {
+      return;
+    }
+
+    const filled = savedRows.filter((row) => row.status !== 'pending').length;
+    els.rowCount.textContent = savedRows.length === filled
+      ? `${savedRows.length} row${savedRows.length === 1 ? '' : 's'}`
+      : `${filled} of ${savedRows.length} rows filled`;
+
+    // +1 for the screenshot paste cell, which is on screen only.
+    if (els.resultsHead.children.length !== resultColumns.length + 1) {
+      els.resultsHead.innerHTML = '';
+
+      const shot = document.createElement('th');
+      shot.className = 'shot';
+      shot.textContent = 'Screenshot';
+      els.resultsHead.append(shot);
+
+      for (const column of resultColumns) {
+        const th = document.createElement('th');
+        th.textContent = column;
+        els.resultsHead.append(th);
+      }
+    }
+
+    // Rebuild only what changed, so a cell you are typing in keeps focus.
+    while (els.resultsBody.children.length > savedRows.length) {
+      els.resultsBody.lastChild.remove();
+    }
+
+    savedRows.forEach((row, index) => {
+      const existing = els.resultsBody.children[index];
+
+      if (!existing) {
+        els.resultsBody.append(buildRowElement(row));
+        return;
+      }
+
+      // A cell-count mismatch means the column list changed since this row was
+      // drawn (rows saved before a new column was added). Rebuild it, or every
+      // value after the new column sits under the wrong header.
+      if (existing.dataset.id !== row.id
+        || existing.dataset.status !== row.status
+        || existing.children.length !== resultColumns.length + 1) {
+        existing.replaceWith(buildRowElement(row));
+        return;
+      }
+
+      // Same row, same state — refresh only cells the user has not touched
+      // and is not currently typing in.
+      resultColumns.forEach((column) => {
+        const field = existing.querySelector(`[data-column="${CSS.escape(column)}"]`);
+
+        if (field && !row.edited[column] && field !== document.activeElement) {
+          field.value = row.cells[column] == null ? '' : String(row.cells[column]);
+        }
+      });
+    });
+  }
+
+  function buildRowElement(row) {
+    const tr = document.createElement('tr');
+    tr.dataset.id = row.id;
+    tr.dataset.status = row.status;
+
+    if (row.status === 'pending') {
+      tr.className = 'pending';
+    } else if (row.status === 'unread' || row.status === 'skipped') {
+      tr.className = 'unread';
+    }
+
+    const shotCell = document.createElement('td');
+    shotCell.className = 'shot';
+    shotCell.append(buildDropzone(row));
+    tr.append(shotCell);
+
+    for (const column of resultColumns) {
+      const td = document.createElement('td');
+      const value = row.cells[column] == null ? '' : String(row.cells[column]);
+
+      if (WIDE_COLUMNS.includes(column)) {
+        td.className = 'wide';
+      }
+
+      let field;
+
+      if (CHOICES[column]) {
+        field = document.createElement('select');
+
+        for (const choice of CHOICES[column]) {
+          const option = document.createElement('option');
+          option.value = choice;
+          option.textContent = choice || '—';
+          option.selected = choice === value;
+          field.append(option);
+        }
+      } else {
+        field = document.createElement('input');
+        field.type = 'text';
+        field.value = value;
+        field.placeholder = row.status === 'pending' ? 'waiting…' : '';
+      }
+
+      field.dataset.column = column;
+
+      // Any hand edit is remembered so a later server update leaves it alone.
+      field.addEventListener('change', () => {
+        row.cells[column] = field.value;
+        row.edited[column] = true;
+        saveRows();
+      });
+
+      td.append(field);
+      tr.append(td);
+    }
+
+    return tr;
+  }
+
+  /** Reads the grid back out, including any edits the user made. */
+  function currentRows() {
+    // [data-column] skips the screenshot paste cell — it exists on screen only
+    // and must never reach the sheet.
+    return [...els.resultsBody.children].map((tr) =>
+      [...tr.querySelectorAll('[data-column]')].map((field) => field.value)
+    );
+  }
+
+  function clearRows() {
+    savedRows = [];
+    els.resultsBody.innerHTML = '';
+    saveRows();
+    renderGrid();
+  }
+
+  /**
+   * Tab-separated, which is what Google Sheets splits into columns on paste.
+   * Tabs and newlines inside a cell would break the grid, so they collapse to
+   * spaces — answers and notes are free text and can contain both.
+   */
+  function toTsv(rows) {
+    return rows
+      .map((cells) => cells.map((cell) => String(cell).replace(/[\t\r\n]+/g, ' ')).join('\t'))
+      .join('\n');
+  }
+
+  function toCsv(columns, rows) {
+    const escape = (cell) => `"${String(cell).replace(/"/g, '""')}"`;
+    return [columns.map(escape).join(','), ...rows.map((cells) => cells.map(escape).join(','))].join('\n');
+  }
+
+  async function copyForSheets() {
+    const text = toTsv(currentRows());
+    const original = els.copyRows.textContent;
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard API needs focus and a secure context; localhost qualifies,
+      // but fall back to the old selection trick if it is blocked anyway.
+      const scratch = document.createElement('textarea');
+      scratch.value = text;
+      document.body.append(scratch);
+      scratch.select();
+      document.execCommand('copy');
+      scratch.remove();
+    }
+
+    els.copyRows.textContent = 'Copied — now paste into the sheet';
+    setTimeout(() => { els.copyRows.textContent = original; }, 2500);
+  }
+
+  function downloadCsv() {
+    const blob = new Blob([toCsv(resultColumns, currentRows())], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    // Same New York calendar day the rows are dated by, so the filename and
+    // the Date Checked column never disagree.
+    const stamp = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    link.download = `ai-visibility-${stamp}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function renderAttention(waiting) {
+    els.attentionCard.hidden = waiting.length === 0;
+    els.attention.innerHTML = '';
+
+    for (const item of waiting) {
+      const box = document.createElement('div');
+      box.className = 'attention';
+
+      const who = document.createElement('div');
+      who.className = 'who';
+      who.textContent = item.label;
+
+      const msg = document.createElement('p');
+      msg.textContent = item.message;
+
+      const button = document.createElement('button');
+      button.className = 'primary';
+      button.textContent = 'Continue';
+      button.addEventListener('click', () => {
+        button.disabled = true;
+        post('/api/continue', { bot: item.label }).catch((err) => {
+          button.disabled = false;
+          appendLog({ level: 'error', message: err.message });
+        });
+      });
+
+      box.append(who, msg, button);
+      els.attention.append(box);
+    }
+  }
+
+  function renderProgress(bots) {
+    els.progressCard.hidden = bots.length === 0;
+    els.progress.innerHTML = '';
+
+    const active = new Set();
+
+    for (const bot of bots) {
+      if (bot.status === 'running' || bot.status === 'starting' || bot.status === 'priming') {
+        active.add(bot.label);
+      }
+
+      const row = document.createElement('div');
+      row.className = 'prog-row';
+
+      const name = document.createElement('span');
+      name.className = 'prog-name';
+      name.textContent = bot.label;
+
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      const fill = document.createElement('i');
+      const pct = bot.total ? Math.round((bot.done / bot.total) * 100) : 0;
+      fill.style.width = `${pct}%`;
+      bar.append(fill);
+
+      const meta = document.createElement('span');
+      meta.className = 'prog-meta';
+      meta.textContent = bot.status === 'failed'
+        ? 'failed'
+        : bot.status === 'stopped'
+          ? 'stopped'
+          : bot.status === 'priming'
+            ? 'setting up'
+            : `${bot.done}/${bot.total}`;
+
+      row.append(name, bar, meta);
+      els.progress.append(row);
+    }
+
+    // Light up the button of whichever AI is working right now.
+    els.aiGrid.querySelectorAll('button').forEach((button) => {
+      button.dataset.active = active.has(button.dataset.label) ? 'true' : 'false';
+    });
+  }
+
+  function applyState(s) {
+    const busy = s.status === 'launching' || s.status === 'running';
+    const isLogin = s.status === 'login';
+
+    els.dot.className = `dot ${busy || isLogin ? 'running' : s.status}`;
+    els.statusText.textContent = s.message || (busy ? 'Working...' : 'Ready');
+
+    // The browser profile can only be driven by one window at a time, so a run
+    // cannot start again until the previous window is closed.
+    setButtonsDisabled(busy || isLogin || s.browserOpen);
+    els.stop.disabled = !busy;
+    els.close.hidden = !s.browserOpen;
+
+    // During login the same button is the "save and finish" action, so it
+    // leads rather than sitting quietly next to Stop.
+    els.close.textContent = isLogin ? 'I am done logging in' : 'Close browser';
+    els.close.className = isLogin ? 'primary' : '';
+
+    renderAttention(s.waiting || []);
+    renderProgress(s.bots || []);
+  }
+
+  // ── events ─────────────────────────────────────────────────────────────────
+
+  function connect() {
+    const source = new EventSource('/api/events');
+
+    // On reconnect the server replays its history, so clear first to avoid
+    // showing every line twice.
+    source.addEventListener('open', () => { resetLogOnNextEvent = true; });
+
+    source.addEventListener('message', (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'log') {
+        appendLog(data);
+      } else if (data.type === 'state') {
+        applyState(data);
+      } else if (data.type === 'results') {
+        mergeResults(data.columns, data.rows);
+      } else if (data.type === 'drive') {
+        applyDrive(data);
+      }
+    });
+
+    source.addEventListener('error', () => {
+      els.statusText.textContent = 'Lost contact with the app — is the terminal window still open?';
+      els.dot.className = 'dot error';
+    });
+  }
+
+  els.copyRows.addEventListener('click', copyForSheets);
+  els.downloadRows.addEventListener('click', downloadCsv);
+  els.clearRows.addEventListener('click', () => {
+    if (confirm(`Clear all ${savedRows.length} rows? This cannot be undone.`)) {
+      clearRows();
+    }
+  });
+  els.clientName.addEventListener('input', () => els.clientName.classList.remove('invalid'));
+  els.clientSite.addEventListener('change', rememberClient);
+  els.driveToggle.addEventListener('click', () => {
+    els.driveSetup.hidden = !els.driveSetup.hidden;
+    els.driveToggle.textContent = els.driveSetup.hidden ? 'Set up' : 'Hide';
+  });
+  els.driveConnect.addEventListener('click', connectDrive);
+  els.driveDisconnect.addEventListener('click', async () => {
+    applyDrive(await post('/api/drive/disconnect'));
+  });
+  els.login.addEventListener('click', login);
+  els.runAll.addEventListener('click', () => run(botList.map((bot) => bot.key)));
+  els.stop.addEventListener('click', () => post('/api/stop').catch(() => {}));
+  els.close.addEventListener('click', () => post('/api/close-browser').catch(() => {}));
+  els.questions.addEventListener('input', updateCount);
+
+  els.questions.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault();
+      run(botList.map((bot) => bot.key));
+    }
+  });
+
+  // ── boot ───────────────────────────────────────────────────────────────────
+
+  (async () => {
+    const [botsRes, questionsRes] = await Promise.all([
+      fetch('/api/bots').then((r) => r.json()),
+      fetch('/api/questions').then((r) => r.json()),
+    ]);
+
+    renderBots(botsRes.bots);
+    els.runAll.textContent = `Run all ${botsRes.bots.length} AIs`;
+    els.questions.value = (questionsRes.text || '').trim();
+    restoreClient();
+
+    // Bring back the grid from the last session before the server says anything.
+    loadRows();
+    renderGrid();
+
+    updateCount();
+    connect();
+  })().catch((err) => {
+    appendLog({ level: 'error', message: `Could not load the app: ${err.message}` });
+  });
+})();
+</script>
+</body>
+</html>

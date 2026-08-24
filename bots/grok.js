@@ -2,6 +2,8 @@
 
 const {
   clickFirstMatching,
+  readNewResponse,
+  snapshotResponses,
   typeIntoInput,
   waitForInputReady,
   waitForResponseToFinish,
@@ -44,6 +46,15 @@ const SELECTORS = {
     'button[aria-label="Stop generating"]',
     'button[aria-label*="Stop" i]',
   ],
+
+  // Blocks holding Grok's replies, most specific first.
+  // UPDATE THIS if the answers stop being read.
+  response: [
+    '.message-bubble',
+    'div[class*="response-content"]',
+    'div[class*="prose"]',
+    '.markdown',
+  ],
 };
 
 const URL = 'https://grok.com/';
@@ -53,14 +64,18 @@ async function open(page) {
 }
 
 /**
- * Sends a single question to Grok and waits for the response to finish.
+ * Sends a single question to Grok, waits for the answer, and reads it back.
  *
  * @param {import('playwright').Page} page
  * @param {string} question
+ * @returns {Promise<{ text: string, links: object[], ok: boolean }>}
  */
 async function run(page, question) {
   try {
     const inputSelector = await waitForInputReady(page, 'Grok', SELECTORS.input);
+
+    // Counted before sending so the answer can be scoped to THIS question.
+    const before = await snapshotResponses(page, SELECTORS.response);
 
     await typeIntoInput(page, inputSelector, question);
 
@@ -73,9 +88,13 @@ async function run(page, question) {
     }
 
     await waitForResponseToFinish(page, 'Grok', SELECTORS.stopButton);
+    return await readNewResponse(page, 'Grok', SELECTORS.response, before);
   } catch (err) {
     logger.error('[Grok] Error:', err.message);
+    return { text: '', links: [], ok: false, reason: err.message };
   }
 }
 
-module.exports = { open, run };
+// SELECTORS is exported so tools/inspect.js can probe them against the live
+// page without duplicating the list.
+module.exports = { open, run, url: URL, selectors: SELECTORS };

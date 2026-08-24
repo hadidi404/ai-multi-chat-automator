@@ -19,3 +19,13 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Google Drive OAuth client + tokens (secrets — never commit)
+drive-config.json
+
+# Screenshots pasted into the results grid
+screenshots/
+
+# Selector inspection reports from tools/inspect.js
+debug/
+drive-client.json

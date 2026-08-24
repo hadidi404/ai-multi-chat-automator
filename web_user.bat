@@ -2,7 +2,7 @@
 setlocal
 cd /d %~dp0
 
-echo AI Automation Launcher
+echo AI Multi-Chat - Web App
 echo ======================
 
 where node >nul 2>&1
@@ -35,20 +35,14 @@ if not exist node_modules (
   )
 )
 
-if not exist questions.txt (
-  echo.
-  echo [ERROR] questions.txt not found.
-  echo Create questions.txt in this folder, one question per line.
-  echo.
-  pause
-  exit /b 1
-)
-
-echo Starting automation...
-call node run_all.js
+echo.
+echo Starting the web app. Your browser will open automatically.
+echo Keep this window open while you use it - closing it stops the app.
+echo.
+call node server.js
 if errorlevel 1 (
   echo.
-  echo [ERROR] Automation exited with an error.
+  echo [ERROR] The web app exited with an error.
   pause
   exit /b 1
 )

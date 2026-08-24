@@ -2,6 +2,8 @@
 
 const {
   clickFirstMatching,
+  readNewResponse,
+  snapshotResponses,
   typeIntoInput,
   waitForInputReady,
   waitForResponseToFinish,
@@ -52,6 +54,15 @@ const SELECTORS = {
     'button[aria-label*="Stop" i]',
     '[data-testid*="stop"]',
   ],
+
+  // Blocks holding the assistant's replies. Most specific first — the reader
+  // takes the first selector that gained a block after the question was sent.
+  // UPDATE THIS if the answers stop being read.
+  response: [
+    '[data-message-author-role="assistant"]',
+    'div[data-testid^="conversation-turn"] div.markdown',
+    'div.markdown.prose',
+  ],
 };
 
 const URL = 'https://chatgpt.com/';
@@ -61,16 +72,20 @@ async function open(page) {
 }
 
 /**
- * Sends a single question to ChatGPT and waits for the response to finish.
+ * Sends a single question to ChatGPT, waits for the answer, and reads it back.
  *
  * @param {import('playwright').Page} page
  * @param {string} question
+ * @returns {Promise<{ text: string, links: object[], ok: boolean }>}
  */
 async function run(page, question) {
   try {
     // If ChatGPT shows login or human verification, the helper pauses and
     // lets the user solve it manually before retrying the input lookup.
     const inputSelector = await waitForInputReady(page, 'ChatGPT', SELECTORS.input);
+
+    // Counted before sending so the answer can be scoped to THIS question.
+    const before = await snapshotResponses(page, SELECTORS.response);
 
     await typeIntoInput(page, inputSelector, question);
 
@@ -83,8 +98,10 @@ async function run(page, question) {
     }
 
     await waitForResponseToFinish(page, 'ChatGPT', SELECTORS.stopButton);
+    return await readNewResponse(page, 'ChatGPT', SELECTORS.response, before);
   } catch (err) {
     logger.error('[ChatGPT] Error:', err.message);
+    return { text: '', links: [], ok: false, reason: err.message };
   }
 }
 
@@ -94,4 +111,6 @@ async function run(page, question) {
 //   then import and call it inside run_all.js.
 // ─────────────────────────────────────────────────────────────────────────────
 
-module.exports = { open, run };
+// SELECTORS is exported so tools/inspect.js can probe them against the live
+// page without duplicating the list.
+module.exports = { open, run, url: URL, selectors: SELECTORS };
