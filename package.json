@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "web": "node server.js",
-    "prepare": "npm install",
-    "check": "node --check server.js && node --check bots/index.js && node --check bots/chatgpt.js && node --check bots/gemini.js && node --check bots/perplexity.js && node --check bots/grok.js && node --check bots/meta.js && node --check utils/session.js && node --check utils/pauseController.js && node --check utils/logger.js && node --check utils/botHelpers.js && node --check utils/analysis.js && node --check utils/summaryPrompt.js && node --check utils/drive.js && node --check utils/resolveBrowser.js && node --check tools/inspect.js",
+    "check": "find server.js bots utils tools -name '*.js' -exec node --check {} +",
     "test": "npm run check"
   },
   "keywords": [],

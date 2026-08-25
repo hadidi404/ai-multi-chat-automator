@@ -13,9 +13,14 @@
 // "Client" is hidden in the sheet but still needs a column of its own, or every
 // value after it lands one column to the left. It carries the client name so a
 // pasted block stays attributable on its own.
+//
+// "AI Output Summary" is written by the AI itself, in response to the set-up
+// message each conversation opens with (see summaryPrompt.js). When an answer
+// arrives without one — a skipped set-up message, a slow or rate-limited site —
+// the cell is left empty rather than filled with a locally assembled guess.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const { MAX_SUMMARY_LENGTH, splitSummary } = require('./summaryPrompt');
+const { splitSummary } = require('./summaryPrompt');
 
 const COLUMNS = [
   'Date Checked',
@@ -233,147 +238,60 @@ function formatDate(date = new Date()) {
   return DATE_FORMATTER.format(date);
 }
 
-// Abbreviations that end in a full stop but do not end a sentence. Without
-// this, "Dr. Smith recommends Acme" splits after "Dr." and the summary starts
-// mid-name.
-const ABBREVIATION_END = /(?:^|\s)(?:mr|mrs|ms|dr|prof|sr|jr|st|ave|inc|ltd|co|corp|vs|etc|approx|dept|est|fig|no|al|e\.g|i\.e|u\.s|u\.k|a\.m|p\.m)\.$/i;
-
 /**
- * Strips markdown decoration and list markers from one line of an answer.
- * AI answers are full of "**Heading**", "- item" and "1. item"; none of that
- * belongs in a spreadsheet cell.
+ * Removes the question when a site's answer blocks include it.
  *
- * @param {string} line
+ * Some chat UIs wrap every message in one shared class — Grok's
+ * `.message-bubble` covers what you sent as well as what came back — so the
+ * range read as "the new answer" can begin with your own question. That is not
+ * cosmetic: for a branded query the client's name is IN the question, so
+ * "Appeared in Output?" reads Yes for an answer that never mentioned them.
+ *
+ * Deliberately strict. Leading lines are only dropped when they reconstruct the
+ * question exactly; anything less is left alone, because cutting real answer
+ * text would be a worse failure than leaving an echo in.
+ *
+ * @param {string} text
+ * @param {string} question
  * @returns {string}
  */
-function cleanLine(line) {
-  return String(line)
-    .replace(/[*_`#]+/g, '')
-    .replace(/^\s*(?:[-–—•·]|\d+[.)])\s+/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+function stripEchoedQuestion(text, question) {
+  const wanted = normalizeText(question);
+  const raw = String(text == null ? '' : text);
 
-/**
- * Splits one line into sentences, keeping abbreviations intact.
- *
- * @param {string} line
- * @returns {string[]}
- */
-function splitSentences(line) {
-  const sentences = [];
-  let pending = '';
+  if (!wanted) {
+    return raw;
+  }
 
-  for (const chunk of line.split(/(?<=[.!?])\s+/)) {
-    pending = pending ? `${pending} ${chunk}` : chunk;
+  const lines = raw.split(/\r?\n/);
+  let taken = 0;
+  let accumulated = '';
 
-    // Ends on an abbreviation, so the sentence continues into the next chunk.
-    if (ABBREVIATION_END.test(pending)) {
+  for (const line of lines) {
+    const next = normalizeText(`${accumulated} ${line}`);
+
+    if (!next) {
+      taken++;
       continue;
     }
 
-    sentences.push(pending);
-    pending = '';
-  }
+    if (!wanted.startsWith(next)) {
+      break;
+    }
 
-  if (pending) {
-    sentences.push(pending);
-  }
+    accumulated = next;
+    taken++;
 
-  return sentences.filter((sentence) => sentence.trim().length > 0);
-}
-
-/**
- * Joins two picked sentences. Real sentences already end in punctuation, so a
- * space is enough; bullet items do not, and running them together turns
- * "Bobs Bread" and "Central Loaf" into one name.
- *
- * @param {string} soFar
- * @returns {string}
- */
-function joiner(soFar) {
-  return /[.!?…]$/.test(soFar) ? ' ' : '; ';
-}
-
-/**
- * FALLBACK summary, used only when the AI ignored the set-up message and never
- * printed an "AI Output Summary:" block of its own (see summaryPrompt.js).
- * Built from the answer text we already captured — no second AI, no API.
- *
- * It is extractive, not written from scratch: it pulls out the sentences that
- * actually name the client, because for this sheet "what did it say about us"
- * is the thing worth reading. When the client is not mentioned at all it falls
- * back to the opening sentences, which tell you what the AI recommended
- * instead — just as useful when you are losing the query.
- *
- * Every word is copied verbatim from the answer and only whole sentences are
- * taken, so the grammar is whatever the AI already wrote. Line breaks are
- * treated as sentence boundaries because bullet points rarely end in a full
- * stop, and running them together produces nonsense like "Acme - sourdough 2.".
- *
- * @param {{ text: string, clientName?: string, maxLength?: number }} input
- * @returns {string}
- */
-function summarize({ text, links, clientName, maxLength = MAX_SUMMARY_LENGTH }) {
-  const raw = String(text == null ? '' : text).replace(/\[\d+\]/g, '');
-
-  // Sites render their sources as little link chips after the answer. innerText
-  // picks each one up as its own line, so without this the summary ends in a
-  // run of repeated source names: "The Geronsins; The Geronsins; ...".
-  const linkLabels = new Set(
-    (Array.isArray(links) ? links : [])
-      .map((link) => normalizeText(link && link.label))
-      .filter(Boolean)
-  );
-
-  const seen = new Set();
-
-  const sentences = raw
-    .split(/\r?\n+/)
-    .map(cleanLine)
-    .filter(Boolean)
-    .flatMap(splitSentences)
-    .filter((sentence) => {
-      const key = normalizeText(sentence);
-
-      // A repeated fragment is a chip or a stray heading, never prose.
-      if (!key || seen.has(key)) {
-        return false;
-      }
-
-      seen.add(key);
-
-      // Matches a link's own text and does not read as a sentence — a chip.
-      return !(linkLabels.has(key) && !/[.!?…]$/.test(sentence.trim()));
-    });
-
-  if (sentences.length === 0) {
-    return '';
-  }
-
-  const aboutClient = clientName
-    ? sentences.filter((sentence) => mentions(sentence, clientName))
-    : [];
-  const chosen = aboutClient.length > 0 ? aboutClient : sentences;
-
-  let summary = '';
-
-  for (const sentence of chosen) {
-    if (!summary) {
-      summary = sentence;
-    } else if (`${summary}${joiner(summary)}${sentence}`.length <= maxLength) {
-      summary += `${joiner(summary)}${sentence}`;
-    } else {
+    if (next === wanted) {
       break;
     }
   }
 
-  // A single sentence can still run past the limit — cut on a word boundary.
-  if (summary.length > maxLength) {
-    summary = `${summary.slice(0, maxLength - 1).replace(/\s+\S*$/, '')}…`;
+  if (accumulated !== wanted) {
+    return raw;
   }
 
-  return summary;
+  return lines.slice(taken).join('\n').trim();
 }
 
 /**
@@ -445,8 +363,11 @@ function buildRow(input) {
     askedAt,
   } = input;
 
-  const text = response && response.text ? response.text : '';
+  const rawText = response && response.text ? response.text : '';
   const links = response && response.links ? response.links : [];
+
+  // Anything the site echoed back of our own question is not part of the answer.
+  const text = stripEchoedQuestion(rawText, question);
 
   // Every judgement column is relative to a client name. Without one, leaving
   // them blank is honest; filling them in would read as "brand never appeared".
@@ -493,7 +414,12 @@ function buildRow(input) {
     'Search Type': searchType,
     'Appeared in Output?': appeared === null ? '' : (appeared ? 'Yes' : 'No'),
     Intent: clientName ? classifyIntent({ text: answer, links, clientName, clientSite }) : '',
-    'AI Output Summary': summary || summarize({ text: answer, links, clientName }),
+    // Left blank on purpose when the AI did not write one. A guessed summary
+    // stitched together from the answer's own sentences looks like a real
+    // result, so a run where the set-up message was missed would be pasted into
+    // the sheet unnoticed. An empty cell in a full column is the signal to
+    // rerun it or write it by hand.
+    'AI Output Summary': summary,
     'Source Link Cited': citedSites(links, platformHost).join(', '),
     'Screenshot Link': '',
     Notes: '',
@@ -502,16 +428,6 @@ function buildRow(input) {
 
 module.exports = {
   COLUMNS,
-  INTENT,
-  SEARCH_TYPE,
   buildPendingRow,
   buildRow,
-  citedSites,
-  classifyIntent,
-  formatDate,
-  hostFromHref,
-  linksToClient,
-  mentions,
-  normalizeText,
-  summarize,
 };

@@ -110,5 +110,4 @@ module.exports = {
   info,
   warn,
   error,
-  currentLevel,
 };

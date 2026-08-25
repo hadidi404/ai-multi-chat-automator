@@ -264,4 +264,4 @@ function resolveBrowserForProfile(userDataDir) {
   return preferred ? { ...preferred, owner } : null;
 }
 
-module.exports = { resolveBrowser, resolveBrowserForProfile, profileOwner };
+module.exports = { resolveBrowserForProfile };

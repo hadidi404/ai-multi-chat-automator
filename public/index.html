@@ -137,6 +137,28 @@
     border-right: 2px solid var(--border);
   }
   th.shot { z-index: 3; }
+
+  /* Rows that answered "No" need no screenshot — a capture only ever evidences
+     an appearance — so the paste target is replaced by a quiet dash. */
+  .shot-na { color: var(--muted); font-size: 12px; }
+
+  .shot-jump {
+    display: block; width: 100%; margin-bottom: 4px;
+    padding: 3px 6px; font-size: 11px; line-height: 1.4;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--accent); cursor: pointer;
+  }
+  .shot-jump:hover:not(:disabled) { border-color: var(--accent); }
+  .shot-jump:disabled { color: var(--muted); cursor: not-allowed; }
+
+  /* Once the jump has been taken the paste box is the main action, so the jump
+     shrinks to a symbol beside it instead of a labelled button above it. */
+  .shot-row { display: flex; align-items: center; gap: 4px; margin: 4px; }
+  .shot-row .dropzone { margin: 0; }
+  .shot-jump.compact {
+    width: 26px; height: 58px; flex: none;
+    margin: 0; padding: 0; font-size: 14px;
+  }
   .dropzone {
     width: 104px; height: 58px; margin: 4px;
     border: 1px dashed var(--border);
@@ -198,8 +220,28 @@
     color: var(--accent);
   }
   button.ai .name { flex: 1; }
-  button.ai[data-active="true"] { border-color: var(--accent); }
-  button.ai[data-active="true"] .badge { background: var(--accent); color: var(--accent-text); }
+
+  /* The tick is the selection state: present and filled when chosen, a hollow
+     outline when not, so the control reads as a checkbox rather than a button
+     that may or may not have been pressed. */
+  button.ai .tick {
+    width: 18px; height: 18px; flex: none;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    display: grid; place-items: center;
+    font-size: 11px; color: transparent;
+  }
+  button.ai[aria-pressed="true"] { border-color: var(--accent); }
+  button.ai[aria-pressed="true"] .badge { background: var(--accent); color: var(--accent-text); }
+  button.ai[aria-pressed="true"] .tick {
+    background: var(--accent); border-color: var(--accent); color: var(--accent-text);
+  }
+
+  /* Separate from selection: which AI is working right now. */
+  button.ai[data-running="true"] {
+    border-color: var(--accent);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
 
   .run-all {
     margin-top: 12px;
@@ -302,16 +344,20 @@
   </div>
 
   <div class="card">
-    <label class="field">Step 4 — send to one AI</label>
+    <div class="row" style="margin-bottom:10px">
+      <label class="field" style="margin:0">Step 4 — pick the AIs to ask</label>
+      <span class="spacer"></span>
+      <button class="link" id="aiAll">Select all</button>
+      <button class="link" id="aiNone">Clear</button>
+    </div>
     <div class="ai-grid" id="aiGrid"></div>
-
-    <label class="field" style="margin:18px 0 8px">Or send to every AI</label>
-    <button class="primary run-all" id="runAll">Run all AIs</button>
+    <button class="primary run-all" id="runSelected">Run</button>
   </div>
 
   <div class="card">
     <div class="row">
       <button id="stop" disabled>Stop</button>
+      <button id="showBrowser" hidden>Show browser</button>
       <button id="close" hidden>Close browser</button>
       <span class="spacer"></span>
       <span class="status"><span class="dot" id="dot"></span><span id="statusText">Ready</span></span>
@@ -434,7 +480,8 @@
   const els = {
     questions: $('questions'), qcount: $('qcount'), aiGrid: $('aiGrid'),
     clientName: $('clientName'), clientSite: $('clientSite'),
-    login: $('login'), runAll: $('runAll'), stop: $('stop'), close: $('close'),
+    login: $('login'), runSelected: $('runSelected'), stop: $('stop'), close: $('close'),
+    aiAll: $('aiAll'), aiNone: $('aiNone'),
     resultsCard: $('resultsCard'), resultsHead: $('resultsHead'), resultsBody: $('resultsBody'),
     rowCount: $('rowCount'), copyRows: $('copyRows'), downloadRows: $('downloadRows'),
     clearRows: $('clearRows'),
@@ -442,13 +489,14 @@
     driveSetup: $('driveSetup'), driveClientId: $('driveClientId'),
     driveClientSecret: $('driveClientSecret'), driveFolder: $('driveFolder'),
     driveConnect: $('driveConnect'), driveDisconnect: $('driveDisconnect'),
-    dot: $('dot'), statusText: $('statusText'),
+    dot: $('dot'), statusText: $('statusText'), showBrowser: $('showBrowser'),
     attentionCard: $('attentionCard'), attention: $('attention'),
     progressCard: $('progressCard'), progress: $('progress'),
     log: $('log'), verbose: $('verbose'),
   };
 
   const CLIENT_KEY = 'ai-multi-chat:client';
+  const PICKED_KEY = 'ai-multi-chat:bots';
   const ROWS_KEY = 'ai-multi-chat:rows';
 
   // Columns the sheet expects a fixed answer for — rendered as dropdowns so a
@@ -462,6 +510,10 @@
   const WIDE_COLUMNS = ['Prompt / Query Tested', 'AI Output Summary', 'Source Link Cited', 'Notes'];
 
   let botList = [];
+  /** Which AIs the next run will ask. @type {Set<string>} */
+  const picked = new Set();
+  /** True while a run or login owns the browser, so nothing else may start. */
+  let controlsLocked = false;
   let driveStatus = { hasClient: false, connected: false, folderSet: false };
   let resetLogOnNextEvent = false;
   let resultColumns = [];
@@ -512,6 +564,11 @@
   // ── running ────────────────────────────────────────────────────────────────
 
   async function run(botKeys) {
+    if (!Array.isArray(botKeys) || botKeys.length === 0) {
+      appendLog({ level: 'error', message: 'Pick at least one AI first.' });
+      return;
+    }
+
     const clientName = els.clientName.value.trim();
 
     // Without a client name, Search Type / Appeared / Intent cannot be filled
@@ -566,9 +623,15 @@
   }
 
   function setButtonsDisabled(disabled) {
-    els.runAll.disabled = disabled;
+    controlsLocked = disabled;
+
     els.login.disabled = disabled;
+    els.aiAll.disabled = disabled;
+    els.aiNone.disabled = disabled;
     els.aiGrid.querySelectorAll('button').forEach((button) => { button.disabled = disabled; });
+
+    // Via renderPicked so an empty selection still wins over merely being idle.
+    renderPicked();
   }
 
   async function login() {
@@ -593,6 +656,8 @@
       const button = document.createElement('button');
       button.className = 'ai';
       button.dataset.label = bot.label;
+      button.dataset.key = bot.key;
+      button.type = 'button';
 
       const badge = document.createElement('span');
       badge.className = 'badge';
@@ -602,9 +667,71 @@
       name.className = 'name';
       name.textContent = bot.label;
 
-      button.append(badge, name);
-      button.addEventListener('click', () => run([bot.key]));
+      const tick = document.createElement('span');
+      tick.className = 'tick';
+      tick.textContent = '✓';
+
+      button.append(badge, name, tick);
+
+      // Picking is separate from running: choose any number, then start once.
+      button.addEventListener('click', () => {
+        if (picked.has(bot.key)) {
+          picked.delete(bot.key);
+        } else {
+          picked.add(bot.key);
+        }
+
+        savePicked();
+        renderPicked();
+      });
+
       els.aiGrid.append(button);
+    }
+
+    renderPicked();
+  }
+
+  /** Reflects the current selection on the tiles and the run button. */
+  function renderPicked() {
+    els.aiGrid.querySelectorAll('button.ai').forEach((button) => {
+      button.setAttribute('aria-pressed', picked.has(button.dataset.key) ? 'true' : 'false');
+    });
+
+    const chosen = botList.filter((bot) => picked.has(bot.key));
+
+    els.runSelected.disabled = controlsLocked || chosen.length === 0;
+    els.runSelected.textContent = chosen.length === 0
+      ? 'Pick at least one AI'
+      : chosen.length === 1
+        ? `Run ${chosen[0].label}`
+        : chosen.length === botList.length
+          ? `Run all ${chosen.length} AIs`
+          : `Run ${chosen.length} AIs`;
+  }
+
+  function savePicked() {
+    try {
+      localStorage.setItem(PICKED_KEY, JSON.stringify([...picked]));
+    } catch { /* private mode — the selection just will not persist */ }
+  }
+
+  /** Restores the last selection, defaulting to every AI on a first visit. */
+  function restorePicked(bots) {
+    let saved = null;
+
+    try {
+      saved = JSON.parse(localStorage.getItem(PICKED_KEY) || 'null');
+    } catch { /* nothing saved yet */ }
+
+    const known = new Set(bots.map((bot) => bot.key));
+    picked.clear();
+
+    // A bot that has since been removed from the registry is dropped rather
+    // than kept as a key that can never be run.
+    const keys = Array.isArray(saved) ? saved.filter((key) => known.has(key)) : [...known];
+
+    for (const key of keys.length > 0 ? keys : known) {
+      picked.add(key);
     }
   }
 
@@ -677,6 +804,109 @@
   }
 
   // ── screenshot paste ───────────────────────────────────────────────────────
+
+  /**
+   * Fills the screenshot cell for one row.
+   *
+   * Three states, in the order the work actually happens:
+   *   not applicable — the client did not appear, so there is nothing to capture
+   *   jump           — go to the answer in the browser
+   *   paste          — the capture exists, drop it in
+   *
+   * The paste target stays hidden until the jump has been used, because until
+   * then there is nothing to paste: offering an input first invites hunting for
+   * the question by hand, which is the step this is meant to remove.
+   */
+  function renderShotCell(row, cell) {
+    cell.innerHTML = '';
+
+    const appeared = String(row.cells['Appeared in Output?'] || '').trim();
+    const hasLink = Boolean(row.shot && row.shot.link);
+
+    // A row that already carries a link keeps its dropzone whatever the verdict
+    // now says — hiding a link already in the sheet would make it unclearable.
+    if (appeared !== 'Yes' && !hasLink) {
+      const note = document.createElement('span');
+      note.className = 'shot-na';
+      note.textContent = appeared === 'No' ? '—' : '';
+      note.title = appeared === 'No'
+        ? 'No screenshot needed — the client did not appear in this answer.'
+        : 'Set "Appeared in Output?" to Yes to add a screenshot.';
+      cell.append(note);
+      return;
+    }
+
+    // The jump is driven by the question text, which every row has, so a row
+    // whose answer could not be read can still be visited.
+    const canJump = row.status !== 'pending' && row.status !== 'skipped';
+
+    if (!canJump || row.jumped || hasLink) {
+      if (!canJump) {
+        cell.append(buildDropzone(row));
+        return;
+      }
+
+      // Paste target first, jump to its right: capturing is the job now, going
+      // back to the answer is the occasional second trip.
+      const pair = document.createElement('div');
+      pair.className = 'shot-row';
+      pair.append(buildDropzone(row), buildJumpButton(row, cell, true));
+      cell.append(pair);
+      return;
+    }
+
+    cell.append(buildJumpButton(row, cell, false));
+  }
+
+  /**
+   * Sends the browser to this exact answer, ready to be captured.
+   *
+   * Once used, the row remembers it, so the cell can move on to the paste
+   * target and the button shrinks to a way back rather than the main action.
+   */
+  function buildJumpButton(row, cell, compact) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = compact ? 'shot-jump compact' : 'shot-jump';
+    button.textContent = compact ? '↗' : 'Jump to question';
+    button.title = compact
+      ? 'Show this answer in the browser again'
+      : 'Bring this answer to the front in the browser window';
+    button.setAttribute('aria-label', button.title);
+
+    button.addEventListener('click', async () => {
+      const label = button.textContent;
+      button.disabled = true;
+      // A 26px button has no room for a word.
+      button.textContent = compact ? '…' : 'Opening…';
+
+      try {
+        const result = await post('/api/reveal', { id: row.id });
+
+        // The tab is in front either way; say so when the question itself
+        // could not be found, rather than looking like nothing happened.
+        if (result && result.message) {
+          appendLog({ level: 'warn', message: result.message });
+        }
+
+        if (!row.jumped) {
+          row.jumped = true;
+          saveRows();
+          renderShotCell(row, cell);
+          return;
+        }
+
+        button.textContent = label;
+      } catch (err) {
+        button.textContent = label;
+        appendLog({ level: 'error', message: err.message });
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    return button;
+  }
 
   function buildDropzone(row) {
     const zone = document.createElement('div');
@@ -975,7 +1205,7 @@
 
     const shotCell = document.createElement('td');
     shotCell.className = 'shot';
-    shotCell.append(buildDropzone(row));
+    renderShotCell(row, shotCell);
     tr.append(shotCell);
 
     for (const column of resultColumns) {
@@ -1012,6 +1242,11 @@
         row.cells[column] = field.value;
         row.edited[column] = true;
         saveRows();
+
+        // Flipping the verdict decides whether this row wants a screenshot.
+        if (column === 'Appeared in Output?') {
+          renderShotCell(row, shotCell);
+        }
       });
 
       td.append(field);
@@ -1160,9 +1395,9 @@
       els.progress.append(row);
     }
 
-    // Light up the button of whichever AI is working right now.
+    // Which AI is working right now — separate from which ones are selected.
     els.aiGrid.querySelectorAll('button').forEach((button) => {
-      button.dataset.active = active.has(button.dataset.label) ? 'true' : 'false';
+      button.dataset.running = active.has(button.dataset.label) ? 'true' : 'false';
     });
   }
 
@@ -1178,6 +1413,9 @@
     setButtonsDisabled(busy || isLogin || s.browserOpen);
     els.stop.disabled = !busy;
     els.close.hidden = !s.browserOpen;
+    // Only useful while a run's window exists; signing in uses its own window,
+    // which the user is already looking at.
+    els.showBrowser.hidden = !s.browserOpen || isLogin;
 
     // During login the same button is the "save and finish" action, so it
     // leads rather than sitting quietly next to Stop.
@@ -1235,15 +1473,31 @@
     applyDrive(await post('/api/drive/disconnect'));
   });
   els.login.addEventListener('click', login);
-  els.runAll.addEventListener('click', () => run(botList.map((bot) => bot.key)));
+  els.runSelected.addEventListener('click', () => run([...picked]));
+
+  els.aiAll.addEventListener('click', () => {
+    botList.forEach((bot) => picked.add(bot.key));
+    savePicked();
+    renderPicked();
+  });
+
+  els.aiNone.addEventListener('click', () => {
+    picked.clear();
+    savePicked();
+    renderPicked();
+  });
   els.stop.addEventListener('click', () => post('/api/stop').catch(() => {}));
   els.close.addEventListener('click', () => post('/api/close-browser').catch(() => {}));
+
+  els.showBrowser.addEventListener('click', () => {
+    post('/api/show-browser').catch((err) => appendLog({ level: 'error', message: err.message }));
+  });
   els.questions.addEventListener('input', updateCount);
 
   els.questions.addEventListener('keydown', (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
       event.preventDefault();
-      run(botList.map((bot) => bot.key));
+      run([...picked]);
     }
   });
 
@@ -1255,8 +1509,8 @@
       fetch('/api/questions').then((r) => r.json()),
     ]);
 
+    restorePicked(botsRes.bots);
     renderBots(botsRes.bots);
-    els.runAll.textContent = `Run all ${botsRes.bots.length} AIs`;
     els.questions.value = (questionsRes.text || '').trim();
     restoreClient();
 

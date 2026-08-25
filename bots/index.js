@@ -103,11 +103,9 @@ function resolveBots(keys) {
 }
 
 module.exports = {
-  BOTS,
   allKeys,
   getBot,
   listBots,
   loginSites,
-  normalizeKey,
   resolveBots,
 };

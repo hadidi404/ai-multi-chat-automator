@@ -205,31 +205,25 @@ async function preparePages(context, count) {
 }
 
 /**
- * Opens one tab per site and navigates each one. Used by the login flow, where
- * the point is simply to put every sign-in page in front of the user at once.
+ * Raises the automation window so it is actually on screen.
  *
- * A site that fails to load is logged and skipped — one dead tab should not
- * cost you the chance to log in to the others.
+ * Launching the browser binary directly does not activate it the way opening
+ * an app does, so on macOS — especially with an everyday Chrome already
+ * running — the window can come up behind everything or on another desktop.
+ * A run then looks like it is doing nothing at all, and the whole point is
+ * being able to watch it.
  *
- * @param {import('playwright').BrowserContext} context
- * @param {{ label: string, url: string }[]} sites
- * @returns {Promise<import('playwright').Page[]>}
+ * Best effort: failing to raise a window is never worth losing a run over.
+ *
+ * @param {import('playwright').Page} page
+ * @returns {Promise<void>}
  */
-async function openSites(context, sites) {
-  const pages = await preparePages(context, sites.length);
-
-  for (let index = 0; index < sites.length; index++) {
-    const site = sites[index];
-    logger.info(`Opening ${site.label}...`);
-
-    try {
-      await pages[index].goto(site.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    } catch (err) {
-      logger.error(`Failed to open ${site.label}: ${err.message}`);
-    }
+async function raiseWindow(page) {
+  if (!page || page.isClosed()) {
+    return;
   }
 
-  return pages;
+  await page.bringToFront().catch(() => {});
 }
 
 /**
@@ -246,6 +240,7 @@ async function openSites(context, sites) {
  *   primer?: string,
  *   shouldStop?: () => boolean,
  *   onProgress?: (update: object) => void,
+ *   onPage?: (entry: { label: string, page: import('playwright').Page }) => void,
  * }} options
  * @returns {Promise<{ label: string, success: boolean, reason?: string }>}
  */
@@ -258,6 +253,7 @@ async function runBotPipeline({
   shouldStop = NEVER_STOP,
   onProgress,
   onResult,
+  onPage,
 }) {
   const report = (update) => {
     if (typeof onProgress === 'function') {
@@ -273,6 +269,12 @@ async function runBotPipeline({
 
   logger.info(`\n[${label}] Starting ${questions.length} question(s)`);
   report({ status: 'starting', total: questions.length, done: 0 });
+
+  // Hand the tab to the caller so it can bring this bot's answers back on
+  // screen after the run, without having to guess which tab is whose.
+  if (typeof onPage === 'function') {
+    onPage({ label, page });
+  }
 
   if (typeof bot.open === 'function') {
     try {
@@ -323,6 +325,14 @@ async function runBotPipeline({
       logger.error(`[${label}] Unexpected error: ${err.message}`);
     }
 
+    // The answer printed next to the question it was paired with — the one
+    // part of the pipeline that can silently attach a row to the wrong reply.
+    if (response) {
+      const opening = String(response.text || '').replace(/\s+/g, ' ').slice(0, 70);
+      logger.debug(`[${label}] Q${qi + 1} "${question.slice(0, 50)}"`);
+      logger.debug(`[${label}] Q${qi + 1} answered: ${opening || '(empty)'}`);
+    }
+
     // One result per question per bot — this becomes one spreadsheet row.
     emitResult({
       platform: label,
@@ -358,9 +368,22 @@ async function runBotPipeline({
  *   onContext?: (context: import('playwright').BrowserContext) => void,
  *   onProgress?: (update: object) => void,
  * }} options
- * @returns {Promise<{ context: import('playwright').BrowserContext, browser: import('playwright').Browser, results: PromiseSettledResult<object>[] }>}
+ * @returns {Promise<{
+ *   context: import('playwright').BrowserContext,
+ *   browser: import('playwright').Browser,
+ *   results: PromiseSettledResult<object>[],
+ * }>}
  */
-async function startRun({ bots, questions, primer = '', shouldStop = NEVER_STOP, onContext, onProgress, onResult }) {
+async function startRun({
+  bots,
+  questions,
+  primer = '',
+  shouldStop = NEVER_STOP,
+  onContext,
+  onProgress,
+  onResult,
+  onPage,
+}) {
   const context = await launchBrowserContext();
 
   if (typeof onContext === 'function') {
@@ -369,6 +392,11 @@ async function startRun({ bots, questions, primer = '', shouldStop = NEVER_STOP,
 
   try {
     const pages = await preparePages(context, bots.length);
+
+    // Put the window in front before any question goes out, so the run is
+    // visible from the start rather than hiding behind the browser you were
+    // already using.
+    await raiseWindow(pages[0]);
 
     logger.info(`Running ${bots.length} AI bot(s) in parallel...`);
 
@@ -383,6 +411,7 @@ async function startRun({ bots, questions, primer = '', shouldStop = NEVER_STOP,
           shouldStop,
           onProgress,
           onResult,
+          onPage,
         })
       )
     );
@@ -404,6 +433,6 @@ module.exports = {
   isProfileInUse,
   launchBrowserContext,
   openProfileWindow,
-  openSites,
+  raiseWindow,
   startRun,
 };

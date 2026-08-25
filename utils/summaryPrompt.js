@@ -194,9 +194,6 @@ function splitSummary(text, maxLength = MAX_SUMMARY_LENGTH) {
 }
 
 module.exports = {
-  MAX_SUMMARY_LENGTH,
-  SUMMARY_LABEL,
-  SUMMARY_RULES,
   buildPrimer,
   splitSummary,
 };

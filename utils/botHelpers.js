@@ -214,9 +214,9 @@ async function findAnswerCandidates(page, selectors, snapshot) {
     const before = snapshot[selector] || 0;
 
     if (count > before) {
-      gained.push({ selector, from: before, to: count });
+      gained.push({ selector, from: before, to: count, gained: true });
     } else {
-      reused.push({ selector, from: count - 1, to: count });
+      reused.push({ selector, from: count - 1, to: count, gained: false });
     }
   }
 
@@ -272,7 +272,12 @@ async function readTarget(page, target) {
  * @param {string[]} selectors
  * @param {Record<string, number>} [snapshot]
  * @param {{ timeout?: number, stableFor?: number, pollInterval?: number }} [options]
- * @returns {Promise<{ text: string, links: { href: string, label: string }[], ok: boolean, reason?: string }>}
+ * @returns {Promise<{
+ *   text: string,
+ *   links: { href: string, label: string }[],
+ *   ok: boolean,
+ *   reason?: string,
+ * }>}
  */
 async function readNewResponse(page, botName, selectors, snapshot = {}, options = {}) {
   const timeout = options.timeout ?? 60_000;
@@ -284,6 +289,12 @@ async function readNewResponse(page, botName, selectors, snapshot = {}, options 
   let best = { text: '', links: [] };
   let sawTarget = false;
   let unchangedSince = 0;
+
+  // What was already on screen when we started looking. A block count that
+  // never grew is only trustworthy once its text has moved: otherwise the
+  // "answer" is the PREVIOUS one, sitting complete and unchanging, which
+  // settles instantly and pairs this question with its neighbour's answer.
+  let textAtFirstLook = null;
 
   while (Date.now() < deadline) {
     const candidates = await findAnswerCandidates(page, selectors, snapshot);
@@ -299,18 +310,29 @@ async function readNewResponse(page, botName, selectors, snapshot = {}, options 
         const read = await readTarget(page, candidate);
 
         if (read.text) {
-          current = read;
+          // Where this answer lives on the page, so the grid can scroll the
+          // user straight to it instead of making them hunt for the question.
+          current = { ...read, gained: candidate.gained };
           break;
         }
       }
+
+      if (textAtFirstLook === null) {
+        textAtFirstLook = current.text;
+      }
+
+      // A gained block is new by definition. A reused one has to prove it is
+      // this question's answer by changing since we started watching.
+      const isThisAnswer = current.gained || current.text !== textAtFirstLook;
 
       if (current.text !== best.text) {
         // Still streaming — or still empty. Either way, keep waiting.
         best = current;
         unchangedSince = current.text ? Date.now() : 0;
-      } else if (current.text && unchangedSince && Date.now() - unchangedSince >= stableFor) {
+      } else if (isThisAnswer && current.text && unchangedSince && Date.now() - unchangedSince >= stableFor) {
         const waited = ((Date.now() - startedAt) / 1000).toFixed(1);
         logger.debug(`[${botName}] Answer settled at ${current.text.length} characters after ${waited}s.`);
+
         return { text: current.text, links: current.links, ok: true };
       }
     }
@@ -322,6 +344,7 @@ async function readNewResponse(page, botName, selectors, snapshot = {}, options 
   // settled is worth more than a blank row.
   if (best.text) {
     logger.warn(`[${botName}] The answer was still changing after ${Math.round(timeout / 1000)}s — taking it as it stands.`);
+
     return { text: best.text, links: best.links, ok: true };
   }
 
@@ -341,11 +364,9 @@ async function readNewResponse(page, botName, selectors, snapshot = {}, options 
 
 module.exports = {
   clickFirstMatching,
-  findAnswerCandidates,
   readNewResponse,
   snapshotResponses,
   typeIntoInput,
-  waitForAnySelector,
   waitForInputReady,
   waitForResponseToFinish,
 };

@@ -21,7 +21,7 @@ const { exec } = require('child_process');
 
 const { listBots, resolveBots, allKeys, loginSites } = require('./bots');
 const { setManualStepHandler } = require('./utils/pauseController');
-const { isProfileInUse, openProfileWindow, startRun } = require('./utils/session');
+const { isProfileInUse, openProfileWindow, raiseWindow, startRun } = require('./utils/session');
 const { COLUMNS, buildRow, buildPendingRow } = require('./utils/analysis');
 const { buildPrimer } = require('./utils/summaryPrompt');
 const drive = require('./utils/drive');
@@ -115,6 +115,12 @@ function broadcastResults() {
  */
 let loginChild = null;
 
+/**
+ * The live tab per bot, while a run's browser is still open. Lets the grid send
+ * the user straight to an answer instead of making them find the question again.
+ */
+const activePages = new Map();
+
 function snapshot() {
   return {
     type: 'state',
@@ -205,6 +211,7 @@ function adoptContext(context) {
     }
 
     activeContext = null;
+    activePages.clear();
     setManualStepHandler(null);
     rejectAllManualSteps('Browser closed');
     setState({ status: 'idle', message: 'Browser closed.', bots: [] });
@@ -444,6 +451,9 @@ async function beginRun({ questions, botKeys, clientName, clientSite }) {
         adoptContext(context);
         setState({ status: 'running', message: 'Sending questions...' });
       },
+      onPage: ({ label, page }) => {
+        activePages.set(label, page);
+      },
       onProgress: (update) => {
         const entry = state.bots.find((bot) => bot.label === update.label);
 
@@ -472,6 +482,14 @@ async function beginRun({ questions, botKeys, clientName, clientSite }) {
           readFailed: result.readFailed,
           askedAt: result.askedAt,
         });
+
+        // An answer that arrived without the summary block means the set-up
+        // message never took — a slow load, a rate limit, a skipped first
+        // message. The cell stays empty, so say why while the run is still on
+        // screen rather than leaving it to be noticed in the sheet later.
+        if (!result.readFailed && !cells['AI Output Summary']) {
+          logger.warn(`[web] ${result.platform} answered question ${result.questionIndex + 1} without an AI Output Summary — that cell is empty.`);
+        }
 
         if (row) {
           row.cells = cells;
@@ -511,6 +529,169 @@ async function beginRun({ questions, botKeys, clientName, clientSite }) {
     logger.error(`[web] Run failed: ${friendly}`);
     setState({ status: 'error', message: friendly });
   }
+}
+
+/**
+ * Finds one question in a conversation.
+ *
+ * Matched on the question's own text, which is the one string on that page we
+ * know exactly, because we sent it. Nothing positional: these sites unmount
+ * messages that scroll out of view, so an index into the rendered DOM means
+ * something different depending on where the reader has scrolled.
+ *
+ * `.last()` because running the same question twice leaves it in the thread
+ * more than once, and the newest is the one just asked.
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} question
+ * @returns {Promise<import('playwright').Locator | null>}
+ */
+async function locateQuestion(page, question) {
+  // Long questions get truncated: the more text that has to match exactly, the
+  // more chances a site's own wrapping or ellipsis breaks it.
+  const asked = String(question || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+
+  if (asked.length <= 12) {
+    return null;
+  }
+
+  try {
+    const found = page.getByText(asked, { exact: false }).last();
+    return await found.count() > 0 ? found : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Marks a question in the page so it is obvious the right one is on screen.
+ *
+ * Runs inside the browser, so it must be self-contained — no closures over
+ * anything out here.
+ *
+ * Two things beyond a plain outline. It centres the message rather than merely
+ * bringing it into view, because an element scrolled to the very bottom edge
+ * does not read as "this is the one". And it climbs to the message bubble
+ * first: a text match lands on the innermost element wrapping the words, which
+ * can be a bare span, and outlining that highlights a fragment rather than the
+ * question.
+ */
+function highlightInPage(el) {
+  // Climb while the parent is still essentially just this message. A parent
+  // holding much more text is the thread, not the bubble.
+  let box = el;
+
+  for (let step = 0; step < 4; step++) {
+    const parent = box.parentElement;
+
+    if (!parent) {
+      break;
+    }
+
+    const mine = (box.textContent || '').trim().length;
+    const theirs = (parent.textContent || '').trim().length;
+
+    // A wrapper adds little more than whitespace or a label. Anything that
+    // brings substantially more text is the thread, not this message.
+    if (theirs > mine * 1.25 + 24) {
+      break;
+    }
+
+    box = parent;
+  }
+
+  const before = {
+    outline: box.style.outline,
+    outlineOffset: box.style.outlineOffset,
+    borderRadius: box.style.borderRadius,
+    background: box.style.backgroundColor,
+    transition: box.style.transition,
+  };
+
+  box.style.transition = 'outline-color 0.4s ease, background-color 0.4s ease';
+  box.style.outline = '3px solid #4f46e5';
+  box.style.outlineOffset = '4px';
+  box.style.borderRadius = '8px';
+  box.style.backgroundColor = 'rgba(79, 70, 229, 0.12)';
+
+  box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+  // Fade out, then put every touched property back exactly as it was.
+  setTimeout(() => {
+    box.style.outline = '3px solid transparent';
+    box.style.backgroundColor = 'transparent';
+  }, 3600);
+
+  setTimeout(() => {
+    box.style.outline = before.outline;
+    box.style.outlineOffset = before.outlineOffset;
+    box.style.borderRadius = before.borderRadius;
+    box.style.backgroundColor = before.background;
+    box.style.transition = before.transition;
+  }, 4200);
+}
+
+/**
+ * Brings the tab holding one exchange to the front and scrolls it into view.
+ *
+ * The screenshot workflow was: copy the question, switch to the browser, find
+ * the question again, then capture it. The tab and the question are both
+ * already known, so none of that hunting is necessary.
+ *
+ * @param {string} rowId
+ */
+async function revealAnswer(rowId) {
+  const row = resultRows.find((entry) => entry.id === rowId);
+
+  if (!row) {
+    throw new Error('That row is not part of the current run.');
+  }
+
+  const label = row.cells['AI Platform'];
+  const page = activePages.get(label);
+
+  if (!page || page.isClosed()) {
+    throw new Error(`The ${label} tab is closed. Reopening it means running the question again.`);
+  }
+
+  await page.bringToFront();
+
+  const target = await locateQuestion(page, row.cells['Prompt / Query Tested']);
+
+  if (!target) {
+    return {
+      platform: label,
+      scrolled: false,
+      message: `Brought ${label} to the front, but could not find that question on the page.`,
+    };
+  }
+
+  try {
+    await target.scrollIntoViewIfNeeded({ timeout: 5_000 });
+    await target.evaluate(highlightInPage);
+  } catch {
+    // The page moved on; the tab is still in front, which is the main thing.
+    return { platform: label, scrolled: false };
+  }
+
+  return { platform: label, scrolled: true };
+}
+
+/**
+ * Brings the run's browser window forward, whichever tab is handy.
+ *
+ * The window can end up behind other windows or on another desktop, which
+ * looks exactly like nothing happening.
+ */
+async function showBrowser() {
+  for (const page of activePages.values()) {
+    if (page && !page.isClosed()) {
+      await raiseWindow(page);
+      return { shown: true };
+    }
+  }
+
+  throw new Error('No browser window is open right now.');
 }
 
 async function stopRun() {
@@ -827,6 +1008,29 @@ async function handleApi(req, res, pathname) {
   if (req.method === 'POST' && pathname === '/api/stop') {
     await stopRun();
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/show-browser') {
+    try {
+      sendJson(res, 200, await showBrowser());
+    } catch (err) {
+      sendJson(res, 409, { error: err.message });
+    }
+
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/reveal') {
+    const body = await readBody(req);
+
+    try {
+      const result = await revealAnswer(String(body.id || ''));
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, 409, { error: err.message });
+    }
+
     return;
   }
 

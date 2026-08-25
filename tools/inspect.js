@@ -208,12 +208,10 @@ async function main() {
   }
 }
 
-// Guarded so the probes can be exercised without launching a browser.
+// Guarded so importing this file cannot start a browser as a side effect.
 if (require.main === module) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);
   });
 }
-
-module.exports = { probe, stopVisible };

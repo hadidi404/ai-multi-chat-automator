@@ -331,12 +331,9 @@ async function uploadImage({ buffer, mimeType, name }) {
 }
 
 module.exports = {
-  CLIENT_FILE,
-  CONFIG_FILE,
   buildAuthUrl,
   disconnect,
   exchangeCode,
-  parseFolderId,
   saveClient,
   saveFolder,
   status,
