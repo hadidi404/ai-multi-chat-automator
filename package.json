@@ -1,0 +1,77 @@
+{
+  "name": "ai-multi-chat",
+  "version": "1.0.0",
+  "description": "Local web app that sends questions to multiple AI chat websites and builds a results grid for a tracking sheet",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "web": "node server.js",
+    "check": "find server.js electron bots utils tools -name '*.js' -exec node --check {} +",
+    "test": "npm run check",
+    "dist": "electron-builder --win",
+    "release": "electron-builder --win --publish always"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "playwright": "^1.58.2",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.raysontech.aimultichat",
+    "productName": "AI Multi-Chat",
+    "directories": {
+      "output": "dist"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "hadidi404",
+        "repo": "ai-multi-chat-automator"
+      }
+    ],
+    "files": [
+      "electron/**/*",
+      "server.js",
+      "bots/**/*",
+      "utils/**/*",
+      "public/**/*",
+      "drive-client.json",
+      "node_modules/**/*",
+      "!node_modules/playwright/.local-browsers/**/*",
+      "!**/*.map",
+      "!debug/**/*",
+      "!user-data/**/*",
+      "!screenshots/**/*",
+      "!dist/**/*",
+      "!tools/**/*"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName} Setup ${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AI Multi-Chat"
+    }
+  }
+}
