@@ -527,13 +527,39 @@ function questionPattern(words, wordCount) {
  * @param {string} question
  * @returns {Promise<import('playwright').Locator | null>}
  */
-async function locateQuestion(page, question) {
-  const words = String(question || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+/**
+ * Scrolls the conversation, returning false once it cannot go further.
+ *
+ * Picks the tallest scrollable element on the page rather than the window:
+ * these chats scroll inside a container, so scrolling the document itself
+ * moves nothing.
+ *
+ * @param {import('playwright').Page} page
+ * @param {number} direction -1 to scroll up, 1 to scroll down
+ * @returns {Promise<boolean>}
+ */
+async function scrollConversation(page, direction) {
+  try {
+    return await page.evaluate((dir) => {
+      const scrollable = [...document.querySelectorAll('*')]
+        .filter((el) => el.scrollHeight > el.clientHeight + 200)
+        .sort((a, b) => b.scrollHeight - a.scrollHeight)[0] || document.scrollingElement;
 
-  if (words.length === 0) {
-    return null;
+      if (!scrollable) {
+        return false;
+      }
+
+      const before = scrollable.scrollTop;
+      scrollable.scrollTop += dir * scrollable.clientHeight * 0.8;
+      return scrollable.scrollTop !== before;
+    }, direction);
+  } catch {
+    return false;
   }
+}
 
+/** Looks for the question in whatever is currently rendered. */
+async function findQuestionOnScreen(page, words) {
   for (const wordCount of [14, 9, 6, 4]) {
     if (wordCount > words.length && wordCount !== 4) {
       continue;
@@ -549,6 +575,50 @@ async function locateQuestion(page, question) {
       }
     } catch {
       // An invalid pattern for this question; the next size may still work.
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Finds a question in a conversation, scrolling back through it if needed.
+ *
+ * These sites unmount messages that scroll out of view, so a question far
+ * enough up the thread is not in the page at all until the container is
+ * scrolled to it — searching alone would report it missing.
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} question
+ * @returns {Promise<import('playwright').Locator | null>}
+ */
+async function locateQuestion(page, question) {
+  const words = String(question || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+
+  if (words.length === 0) {
+    return null;
+  }
+
+  const onScreen = await findQuestionOnScreen(page, words);
+
+  if (onScreen) {
+    return onScreen;
+  }
+
+  // Work upwards: the question was asked before the answer being looked at, so
+  // it is above whatever is on screen now.
+  for (let step = 0; step < 25; step++) {
+    if (!await scrollConversation(page, -1)) {
+      break;
+    }
+
+    // Virtualised lists mount rows a frame after the scroll.
+    await page.waitForTimeout(150);
+
+    const found = await findQuestionOnScreen(page, words);
+
+    if (found) {
+      return found;
     }
   }
 
