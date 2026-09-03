@@ -1,6 +1,6 @@
 {
   "name": "ai-multi-chat",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Local web app that sends questions to multiple AI chat websites and builds a results grid for a tracking sheet",
   "main": "electron/main.js",
   "scripts": {
