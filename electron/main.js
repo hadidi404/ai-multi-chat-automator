@@ -123,21 +123,27 @@ function beginUpdateCheck() {
     isInstallingUpdate = true;
 
     // The installer starts by uninstalling this version, which fails while
-    // anything still holds its files. Close the automation browser and every
-    // window first, rather than relying on the quit to do it in time.
-    await server.closeBrowser().catch(() => {});
+    // anything still holds its files, so the automation browser is closed
+    // first. Capped: closing a browser that has stopped responding can hang,
+    // and waiting forever is worse than leaving it to the quit.
+    await Promise.race([
+      server.closeBrowser().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 3_000)),
+    ]);
 
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) {
-        window.destroy();
-      }
+    // Only the app window. Destroying the update window too would leave no
+    // windows open, and window-all-closed would quit the app before
+    // quitAndInstall ever ran.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.destroy();
+      mainWindow = null;
     }
 
     // isSilent stays false: a silent NSIS run does not wait for this process to
     // release its files, which is exactly how the uninstall step fails.
     // oneClick already reduces the installer to a progress bar, so there is no
     // wizard either way. isForceRunAfter reopens the app when it finishes.
-    setTimeout(() => autoUpdater.quitAndInstall(false, true), 2_000);
+    setTimeout(() => autoUpdater.quitAndInstall(false, true), 1_500);
   });
 
   autoUpdater.on('update-not-available', startApp);
@@ -166,6 +172,13 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  // During an update the windows close on the way to quitAndInstall, which is
+  // what must do the quitting: quitting here instead would end the process
+  // before the installer was ever started.
+  if (isInstallingUpdate) {
+    return;
+  }
+
   app.quit();
 });
 
