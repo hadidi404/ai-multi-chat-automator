@@ -10,6 +10,14 @@ const { autoUpdater } = require('electron-updater');
 // Must be set before the server is loaded: it decides where the browser
 // profile, saved questions and Drive credentials live. Inside the installed
 // app the code is read-only, so none of them can sit next to it.
+// One copy at a time. A second instance would hold the same installed files
+// and the same browser profile, and the installer cannot replace files another
+// process still has open — which is how an update fails to uninstall.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
 process.env.AI_MULTI_CHAT_DATA = app.getPath('userData');
 
 const server = require('../server');
@@ -131,19 +139,15 @@ function beginUpdateCheck() {
       new Promise((resolve) => setTimeout(resolve, 3_000)),
     ]);
 
-    // Only the app window. Destroying the update window too would leave no
-    // windows open, and window-all-closed would quit the app before
-    // quitAndInstall ever ran.
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.destroy();
-      mainWindow = null;
-    }
-
+    // Windows are left to quitAndInstall, which closes them itself. Doing it
+    // by hand here is what previously left none open, letting the app quit
+    // before the installer had started.
+    //
     // isSilent stays false: a silent NSIS run does not wait for this process to
     // release its files, which is exactly how the uninstall step fails.
     // oneClick already reduces the installer to a progress bar, so there is no
     // wizard either way. isForceRunAfter reopens the app when it finishes.
-    setTimeout(() => autoUpdater.quitAndInstall(false, true), 1_500);
+    autoUpdater.quitAndInstall(false, true);
   });
 
   autoUpdater.on('update-not-available', startApp);
