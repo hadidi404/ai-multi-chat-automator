@@ -43,6 +43,7 @@
       "bots/**/*",
       "utils/**/*",
       "public/**/*",
+      "app-config.json",
       "drive-client.json",
       "node_modules/**/*",
       "!node_modules/playwright/.local-browsers/**/*",

@@ -291,61 +291,91 @@
   .log .debug { color: #8891a0; }
 
   .foot { color: var(--muted); font-size: 12px; text-align: center; }
+
+  /* Sign-in gate. Opaque rather than dimmed: the app behind it is not usable
+     yet, and showing it greyed out invites clicking at it. */
+  .gate {
+    position: fixed; inset: 0; z-index: 50;
+    background: var(--bg);
+    display: grid; place-items: center;
+    padding: 24px;
+  }
+  /* An author-level display wins over the hidden attribute, which is only a
+     UA-stylesheet rule, so hiding it has to be spelled out. */
+  .gate[hidden] { display: none; }
+  .gate-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    width: min(420px, 100%);
+    text-align: center;
+  }
+  .gate-card h1 { margin: 0 0 6px; font-size: 20px; }
+  .gate-card .sub { margin: 0 0 20px; }
+  .gate-card button { width: 100%; padding: 12px; font-size: 15px; }
+  .gate-card .hint { display: block; margin: 12px 0 0; color: var(--err); min-height: 1.2em; }
 </style>
 </head>
 <body>
+<div class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <h1>AI Multi-Chat</h1>
+    <p class="sub" id="gateHint">Sign in with your work Google account.</p>
+    <button class="primary" id="gateSignIn">Sign in with Google</button>
+    <p class="hint" id="gateError"></p>
+  </div>
+</div>
+
 <div class="wrap">
 
   <header>
     <h1>AI Multi-Chat</h1>
-    <p class="sub">Type your questions, then pick one AI — or send them to all of them at once.</p>
+    <p class="sub">Ask the same questions across every AI and collect the answers in one grid.</p>
   </header>
 
   <div class="card">
-    <label class="field">Step 1 — sign in <span class="hint">— only needed the first time, or if an AI logs you out</span></label>
+    <label class="field">Step 1 &mdash; Sign in to the AI sites</label>
     <div class="row">
-      <button id="login">Log in to the AIs</button>
-      <span class="hint">Opens Google and all 5 AI sites in one window so you can sign in. Close that window when you are done — your logins are saved for next time.</span>
+      <button id="login">Sign in</button>
+      <span class="hint">
+        Opens all five sites in one window. Sign in to each, then close it &mdash; your logins are
+        saved for future runs. Only needed once, or if a site signs you out.
+      </span>
     </div>
-    <p class="hint" style="margin:10px 0 0">
-      This window is a normal browser, not an automated one, because Google refuses passwords
-      typed into automated browsers. It uses its own profile, so it starts signed out even if
-      you are signed in to your everyday browser. On a Mac, closing the window is not enough
-      &mdash; quit the browser with Cmd+Q, or click &ldquo;I am done logging in&rdquo;.
-    </p>
   </div>
 
   <div class="card">
-    <label class="field">Step 2 — who are we tracking?</label>
+    <label class="field">Step 2 &mdash; Client</label>
     <div class="inputs">
       <div>
         <label class="sublabel" for="clientName">Client name <span class="req">required</span></label>
-        <input id="clientName" type="text" placeholder="Acme Bakery" autocomplete="off">
-        <span class="hint">Used to decide Branded vs Non-Branded, and whether they appeared in the answer.</span>
+        <input id="clientName" type="text" placeholder="Visible Agent" autocomplete="off">
+        <span class="hint">Sets Search Type and whether the client appeared in each answer.</span>
       </div>
       <div>
         <label class="sublabel" for="clientSite">Client website <span class="opt">optional</span></label>
-        <input id="clientSite" type="text" placeholder="acmebakery.com" autocomplete="off">
-        <span class="hint">Makes "Cited with link" accurate instead of guessing from the name.</span>
+        <input id="clientSite" type="text" placeholder="visibleagent.com" autocomplete="off">
+        <span class="hint">Recommended. Without it, Intent is inferred from the client name alone.</span>
       </div>
     </div>
   </div>
 
   <div class="card">
     <label class="field" for="questions">
-      Step 3 — your questions <span class="hint">— one per line</span>
+      Step 3 &mdash; Questions <span class="hint">one per line</span>
     </label>
-    <textarea id="questions" placeholder="Place your questions here...&#10;"></textarea>
+    <textarea id="questions" placeholder="One question per line"></textarea>
     <div class="row" style="margin-top:10px">
       <span class="hint" id="qcount">0 questions</span>
       <span class="spacer"></span>
-      <span class="hint">Ctrl/Cmd + Enter runs all</span>
+      <span class="hint">Ctrl + Enter to run</span>
     </div>
   </div>
 
   <div class="card">
     <div class="row" style="margin-bottom:10px">
-      <label class="field" style="margin:0">Step 4 — pick the AIs to ask</label>
+      <label class="field" style="margin:0">Step 4 &mdash; Platforms</label>
       <span class="spacer"></span>
       <button class="link" id="aiAll">Select all</button>
       <button class="link" id="aiNone">Clear</button>
@@ -365,7 +395,7 @@
   </div>
 
   <div class="card" id="attentionCard" hidden>
-    <label class="field">Needs you</label>
+    <label class="field">Action needed</label>
     <div id="attention"></div>
   </div>
 
@@ -379,59 +409,26 @@
       <label class="field" style="margin:0">Screenshot links</label>
       <span class="spacer"></span>
       <span class="status"><span class="dot" id="driveDot"></span><span class="hint" id="driveState">Not set up</span></span>
-      <button class="link" id="driveToggle">Automatic upload (optional)</button>
+      <button class="link" id="driveToggle">Set up</button>
     </div>
-    <p class="hint" style="margin:0 0 6px">
-      <strong>Nothing to set up.</strong> Upload your screenshots to your own Drive folder as usual, then in
-      Drive use <strong>Share → Copy link</strong> on a picture and paste it into that row&rsquo;s
-      <strong>Screenshot</strong> box on the left. The Screenshot Link column becomes a clickable
-      <strong>HERE</strong>.
+    <p class="hint" style="margin:0 0 4px">
+      Paste a screenshot into any row and it uploads to your Drive folder, or paste a Drive
+      link you already have.
     </p>
     <p class="hint" style="margin:0">
-      Make sure the folder or file is shared as <strong>Anyone with the link</strong>, or teammates
-      opening the sheet will not be able to see the picture.
+      Shared screenshots must be set to <strong>Anyone with the link</strong>, or colleagues
+      opening the sheet will not see them.
     </p>
 
     <div id="driveSetup" hidden style="margin-top:14px">
-      <div id="driveDevSetup">
-      <p class="hint" style="margin:0 0 10px">
-        <strong>One-time setup, done by whoever set this tool up</strong> &mdash; not by everyday users.
-        Create the OAuth app once, save <span class="mono">drive-client.json</span> into this folder, and
-        everyone you share the folder with only has to click Connect.
-      </p>
-      <ol class="hint" style="margin:0 0 14px; padding-left:20px; line-height:1.9">
-        <li>Sign in to <span class="mono">console.cloud.google.com</span> with your work account → create a project</li>
-        <li>APIs &amp; Services → Library → enable <strong>Google Drive API</strong></li>
-        <li>APIs &amp; Services → OAuth consent screen → User type
-            <strong>Internal</strong>
-            <span class="opt">— important: this is what keeps everyone signed in permanently</span></li>
-        <li>Credentials → Create credentials → <strong>OAuth client ID</strong> → type <strong>Desktop app</strong></li>
-        <li>Paste the Client ID and Secret below and click Save and connect</li>
-      </ol>
-      <p class="hint" style="margin:0 0 14px">
-        Saving writes <span class="mono">drive-client.json</span> into this folder. Include that file when
-        you copy the folder to colleagues and they will only see a folder box and a Connect button.
-      </p>
-      <div class="inputs">
-        <div>
-          <label class="sublabel" for="driveClientId">Client ID</label>
-          <input id="driveClientId" type="text" placeholder="1234-abc.apps.googleusercontent.com" autocomplete="off">
-        </div>
-        <div>
-          <label class="sublabel" for="driveClientSecret">Client Secret</label>
-          <input id="driveClientSecret" type="password" placeholder="GOCSPX-…" autocomplete="off">
-        </div>
-      </div>
-      </div>
-
-      <div style="margin-top:12px">
-        <label class="sublabel" for="driveFolder">Your Drive folder link</label>
+      <div>
+        <label class="sublabel" for="driveFolder">Drive folder link</label>
         <input id="driveFolder" type="text" placeholder="https://drive.google.com/drive/folders/…" autocomplete="off">
-        <span class="hint">Open your folder in Drive and copy the URL from the address bar.</span>
+        <span class="hint">Open the folder in Drive and copy the address.</span>
       </div>
 
       <div class="row" style="margin-top:12px">
-        <button class="primary" id="driveConnect">Save and connect</button>
+        <button class="primary" id="driveConnect">Connect</button>
         <button id="driveDisconnect" hidden>Disconnect</button>
       </div>
     </div>
@@ -439,18 +436,16 @@
 
   <div class="card" id="resultsCard" hidden>
     <div class="row" style="margin-bottom:12px">
-      <label class="field" style="margin:0">Results for the sheet</label>
+      <label class="field" style="margin:0">Results</label>
       <span class="hint" id="rowCount"></span>
       <span class="spacer"></span>
-      <button class="primary" id="copyRows">Copy for Google Sheets</button>
-      <button id="downloadRows">Download .csv</button>
-      <button id="clearRows">Clear rows</button>
+      <button class="primary" id="copyRows">Copy for Sheets</button>
+      <button id="downloadRows">Download CSV</button>
+      <button id="clearRows">Clear</button>
     </div>
     <p class="hint" style="margin:0 0 10px">
-      Columns match your sheet exactly. Click <strong>Copy</strong>, then click the first empty cell
-      under <em>Date Checked</em> in Google Sheets and paste — the header row is not included.
-      Any cell can be edited first, and your edits are kept. Rows are saved in this browser and
-      build up across runs until you clear them.
+      Copy, then paste into the first empty cell under <em>Date Checked</em>. Headers are not
+      included. Cells can be edited first, and rows are kept across runs until cleared.
     </p>
     <div class="table-scroll">
       <table id="resultsTable">
@@ -478,6 +473,7 @@
 
   const $ = (id) => document.getElementById(id);
   const els = {
+    gate: $('gate'), gateSignIn: $('gateSignIn'), gateHint: $('gateHint'), gateError: $('gateError'),
     questions: $('questions'), qcount: $('qcount'), aiGrid: $('aiGrid'),
     clientName: $('clientName'), clientSite: $('clientSite'),
     login: $('login'), runSelected: $('runSelected'), stop: $('stop'), close: $('close'),
@@ -486,8 +482,7 @@
     rowCount: $('rowCount'), copyRows: $('copyRows'), downloadRows: $('downloadRows'),
     clearRows: $('clearRows'),
     driveDot: $('driveDot'), driveState: $('driveState'), driveToggle: $('driveToggle'),
-    driveSetup: $('driveSetup'), driveClientId: $('driveClientId'),
-    driveClientSecret: $('driveClientSecret'), driveFolder: $('driveFolder'),
+    driveSetup: $('driveSetup'), driveFolder: $('driveFolder'),
     driveConnect: $('driveConnect'), driveDisconnect: $('driveDisconnect'),
     dot: $('dot'), statusText: $('statusText'), showBrowser: $('showBrowser'),
     attentionCard: $('attentionCard'), attention: $('attention'),
@@ -743,21 +738,14 @@
     const ready = status.connected && status.folderSet;
     els.driveDot.className = `dot ${ready ? 'finished' : ''}`;
     els.driveState.textContent = ready
-      ? 'Auto-upload on — paste a link or an image'
+      ? 'Connected'
       : status.connected
-        ? 'Connected, but no folder set'
-        : status.hasClient
-          ? 'Credentials saved — not connected yet'
-          : 'Paste Drive links (no setup needed)';
+        ? 'No folder set'
+        : 'Not connected';
 
     els.driveDisconnect.hidden = !status.connected;
 
-    // Credentials shipped with the app: the user never sees a Cloud Console.
-    const setupBlock = document.getElementById('driveDevSetup');
-    if (setupBlock) setupBlock.hidden = Boolean(status.preconfigured);
-    els.driveToggle.textContent = status.preconfigured
-      ? (els.driveSetup.hidden ? 'Connect Drive' : 'Hide')
-      : (els.driveSetup.hidden ? 'Automatic upload (optional)' : 'Hide');
+    els.driveToggle.textContent = els.driveSetup.hidden ? 'Set up' : 'Hide';
 
     if (status.folderId && !els.driveFolder.value) {
       els.driveFolder.value = `https://drive.google.com/drive/folders/${status.folderId}`;
@@ -772,32 +760,25 @@
         && !zone.classList.contains('failed')
         && !zone.classList.contains('busy')
         && !zone.classList.contains('armed')) {
-        zone.textContent = ready ? 'paste link or image' : 'paste Drive link';
+        zone.textContent = ready ? 'paste image or link' : 'paste link';
       }
     });
   }
 
   async function connectDrive() {
-    const clientId = els.driveClientId.value.trim();
-    const clientSecret = els.driveClientSecret.value.trim();
-
     try {
-      if (clientId && clientSecret) {
-        applyDrive(await post('/api/drive/client', { clientId, clientSecret }));
-      }
-
       if (els.driveFolder.value.trim()) {
         applyDrive(await post('/api/drive/folder', { folder: els.driveFolder.value.trim() }));
       }
 
       if (!driveStatus.hasClient) {
-        appendLog({ level: 'error', message: 'Enter the Client ID and Client Secret first.' });
+        appendLog({ level: 'error', message: 'This copy has no Google credentials configured.' });
         return;
       }
 
       // Opens Google's consent screen; the server catches the redirect.
       await post('/api/drive/connect');
-      els.driveState.textContent = 'Waiting for you to approve in Google...';
+      els.driveState.textContent = 'Waiting for approval in Google…';
     } catch (err) {
       appendLog({ level: 'error', message: err.message });
     }
@@ -912,7 +893,7 @@
     const zone = document.createElement('div');
     zone.className = 'dropzone';
     zone.tabIndex = 0;
-    zone.title = 'Click to select this row, then paste your screenshot (Cmd/Ctrl+V)';
+    zone.title = 'Click this row, then paste the screenshot (Ctrl+V)';
 
     const ready = driveStatus.connected && driveStatus.folderSet;
 
@@ -1442,6 +1423,12 @@
         appendLog(data);
       } else if (data.type === 'state') {
         applyState(data);
+      } else if (data.type === 'auth') {
+        applyAuth(data);
+      } else if (data.type === 'auth-error') {
+        els.gateError.textContent = data.message;
+        els.gateSignIn.textContent = 'Sign in with Google';
+        els.gateSignIn.disabled = false;
       } else if (data.type === 'results') {
         mergeResults(data.columns, data.rows);
       } else if (data.type === 'drive') {
@@ -1489,6 +1476,70 @@
   els.stop.addEventListener('click', () => post('/api/stop').catch(() => {}));
   els.close.addEventListener('click', () => post('/api/close-browser').catch(() => {}));
 
+  let signInTimer = null;
+
+  function applyAuth(auth) {
+    els.gate.hidden = Boolean(auth.signedIn);
+
+    els.gateHint.textContent = auth.domain
+      ? `This copy is for @${auth.domain} accounts.`
+      : 'Sign in with your work Google account.';
+
+    if (auth.signedIn) {
+      loadApp().catch((err) => appendLog({ level: 'error', message: err.message }));
+    }
+  }
+
+  // Asks rather than only listening: a sign-in completed against another
+  // instance, or a broadcast missed while the stream reconnected, would
+  // otherwise leave this waiting for something that already happened.
+  function waitForSignIn() {
+    const startedAt = Date.now();
+    clearInterval(signInTimer);
+
+    signInTimer = setInterval(async () => {
+      if (els.gate.hidden) {
+        clearInterval(signInTimer);
+        return;
+      }
+
+      try {
+        const auth = await fetch('/api/auth/status').then((r) => r.json());
+
+        if (auth.signedIn) {
+          clearInterval(signInTimer);
+          applyAuth(auth);
+          return;
+        }
+      } catch {
+        // Server not answering yet; the next tick tries again.
+      }
+
+      if (Date.now() - startedAt > 60_000) {
+        clearInterval(signInTimer);
+        els.gateError.textContent = `No answer from Google. Make sure you signed in from ${location.origin}, then try again.`;
+        els.gateSignIn.textContent = 'Sign in with Google';
+        els.gateSignIn.disabled = false;
+      }
+    }, 2_000);
+  }
+
+  els.gateSignIn.addEventListener('click', async () => {
+    els.gateError.textContent = '';
+    els.gateSignIn.disabled = true;
+    els.gateSignIn.textContent = 'Opening Google…';
+
+    try {
+      await post('/api/auth/start');
+      els.gateSignIn.textContent = 'Waiting for Google…';
+      waitForSignIn();
+    } catch (err) {
+      els.gateError.textContent = err.message;
+      els.gateSignIn.textContent = 'Sign in with Google';
+      els.gateSignIn.disabled = false;
+    }
+  });
+
   els.showBrowser.addEventListener('click', () => {
     post('/api/show-browser').catch((err) => appendLog({ level: 'error', message: err.message }));
   });
@@ -1503,11 +1554,20 @@
 
   // ── boot ───────────────────────────────────────────────────────────────────
 
-  (async () => {
+  let appLoaded = false;
+
+  /** Everything that needs a signed-in account. Runs once. */
+  async function loadApp() {
+    if (appLoaded) {
+      return;
+    }
+
     const [botsRes, questionsRes] = await Promise.all([
       fetch('/api/bots').then((r) => r.json()),
       fetch('/api/questions').then((r) => r.json()),
     ]);
+
+    appLoaded = true;
 
     restorePicked(botsRes.bots);
     renderBots(botsRes.bots);
@@ -1519,6 +1579,13 @@
     renderGrid();
 
     updateCount();
+  }
+
+  (async () => {
+    const auth = await fetch('/api/auth/status').then((r) => r.json());
+    applyAuth(auth);
+
+    // Connected either way: the sign-in result arrives on this stream.
     connect();
   })().catch((err) => {
     appendLog({ level: 'error', message: `Could not load the app: ${err.message}` });

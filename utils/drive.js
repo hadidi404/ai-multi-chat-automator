@@ -1,60 +1,25 @@
 'use strict';
 
 const fs = require('fs');
-const path = require('path');
 
-const { PROJECT_ROOT, dataPath } = require('./paths');
+const { dataPath } = require('./paths');
+const {
+  AUTH_ENDPOINT,
+  TOKEN_ENDPOINT,
+  postForm,
+  readClient,
+  readJson,
+} = require('./googleClient');
 
 // Uploads a pasted screenshot to a Drive folder and returns a shareable link.
 //
 // Uses the drive.file scope, which grants access only to files this app
-// creates. Credentials live in drive-client.json, tokens in drive-config.json.
+// creates.
 
-// Bundled credentials are read first, so a distributed copy arrives ready to
-// connect; anything entered by hand is written to the data folder instead.
-const SHIPPED_CLIENT_FILE = path.join(PROJECT_ROOT, 'drive-client.json');
-const CLIENT_FILE = dataPath('drive-client.json');
 const CONFIG_FILE = dataPath('drive-config.json');
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
-const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
-const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const UPLOAD_ENDPOINT = 'https://www.googleapis.com/upload/drive/v3/files';
 const FILES_ENDPOINT = 'https://www.googleapis.com/drive/v3/files';
-
-/** Cached access token — short lived, never written to disk. */
-let accessToken = null;
-let accessTokenExpiry = 0;
-
-function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf-8'));
-  } catch {
-    return {};
-  }
-}
-
-/**
- * The OAuth app credentials. A shipped drive-client.json wins, so a teammate
- * only has to click Connect. Anything pasted into the UI is the fallback.
- *
- * @returns {{ clientId: string, clientSecret: string, preconfigured: boolean }}
- */
-function readClient() {
-  for (const file of [SHIPPED_CLIENT_FILE, CLIENT_FILE]) {
-    const found = readJson(file);
-
-    if (found.clientId && found.clientSecret) {
-      return { clientId: found.clientId, clientSecret: found.clientSecret, preconfigured: true };
-    }
-  }
-
-  const local = readJson(CONFIG_FILE);
-  return {
-    clientId: local.clientId || '',
-    clientSecret: local.clientSecret || '',
-    preconfigured: false,
-  };
-}
 
 function readConfig() {
   return readJson(CONFIG_FILE);
@@ -113,21 +78,6 @@ function status() {
   };
 }
 
-/**
- * Saves the OAuth app credentials into drive-client.json — the file that ships
- * with the folder. Setting up here once is what lets teammates skip straight to
- * "Connect".
- */
-function saveClient({ clientId, clientSecret }) {
-  const next = {
-    clientId: String(clientId || '').trim(),
-    clientSecret: String(clientSecret || '').trim(),
-  };
-
-  fs.writeFileSync(CLIENT_FILE, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
-  return next;
-}
-
 function saveFolder(value) {
   const folderId = parseFolderId(value);
 
@@ -169,22 +119,6 @@ function buildAuthUrl(redirectUri) {
   });
 
   return `${AUTH_ENDPOINT}?${params.toString()}`;
-}
-
-async function postForm(url, body) {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(body).toString(),
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(data.error_description || data.error || `Google returned ${response.status}`);
-  }
-
-  return data;
 }
 
 /**
@@ -321,7 +255,6 @@ module.exports = {
   buildAuthUrl,
   disconnect,
   exchangeCode,
-  saveClient,
   saveFolder,
   status,
   uploadImage,

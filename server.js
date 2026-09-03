@@ -14,6 +14,7 @@ const { setManualStepHandler } = require('./utils/pauseController');
 const { isProfileInUse, openProfileWindow, raiseWindow, startRun } = require('./utils/session');
 const { COLUMNS, buildRow, buildPendingRow } = require('./utils/analysis');
 const { buildPrimer } = require('./utils/summaryPrompt');
+const auth = require('./utils/auth');
 const drive = require('./utils/drive');
 const logger = require('./utils/logger');
 
@@ -791,6 +792,7 @@ function serveEvents(req, res) {
   res.write(`data: ${JSON.stringify(snapshot())}\n\n`);
   res.write(`data: ${JSON.stringify({ type: 'results', columns: COLUMNS, rows: resultRows })}\n\n`);
   res.write(`data: ${JSON.stringify({ type: 'drive', ...drive.status() })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'auth', ...auth.status() })}\n\n`);
 
   // Proxies and browsers drop idle streams; a comment every 20 s keeps it warm.
   const keepAlive = setInterval(() => {
@@ -808,6 +810,36 @@ function serveEvents(req, res) {
 }
 
 async function handleApi(req, res, pathname) {
+  if (req.method === 'GET' && pathname === '/api/auth/status') {
+    sendJson(res, 200, auth.status());
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/start') {
+    try {
+      openInBrowser(auth.buildSignInUrl(redirectUri()));
+      sendJson(res, 200, { opened: true });
+    } catch (err) {
+      sendJson(res, 400, { error: err.message });
+    }
+
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/signout') {
+    auth.signOut();
+    broadcast({ type: 'auth', ...auth.status() });
+    sendJson(res, 200, auth.status());
+    return;
+  }
+
+  // Everything past this point requires a signed-in account, so a new
+  // endpoint is closed by default rather than open by omission.
+  if (!auth.status().signedIn) {
+    sendJson(res, 401, { error: 'Sign in with your work Google account first.' });
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/api/bots') {
     sendJson(res, 200, { bots: listBots(), defaults: allKeys() });
     return;
@@ -875,13 +907,6 @@ async function handleApi(req, res, pathname) {
   }
 
   if (req.method === 'GET' && pathname === '/api/drive/status') {
-    sendJson(res, 200, drive.status());
-    return;
-  }
-
-  if (req.method === 'POST' && pathname === '/api/drive/client') {
-    const body = await readBody(req);
-    drive.saveClient({ clientId: body.clientId, clientSecret: body.clientSecret });
     sendJson(res, 200, drive.status());
     return;
   }
@@ -1024,10 +1049,29 @@ const server = http.createServer(async (req, res) => {
         + '<p style="color:#555">You can close this tab and go back to AI Multi-Chat.</p>');
     };
 
+    // Sign-in and Drive share a client, so the redirect URI is identical and
+    // `state` is what tells the two flows apart.
+    const isSignIn = searchParams.get('state') === 'signin';
+    const failureTitle = isSignIn ? 'Not signed in' : 'Google Drive was not connected';
     const error = searchParams.get('error');
 
     if (error) {
-      finish('Google Drive was not connected', `Google reported: ${error}`);
+      finish(failureTitle, `Google reported: ${error}`);
+      return;
+    }
+
+    if (isSignIn) {
+      try {
+        const who = await auth.completeSignIn(searchParams.get('code'), redirectUri());
+        logger.info(`[web] Signed in as ${who.email}.`);
+        broadcast({ type: 'auth', ...auth.status() });
+        finish(`Signed in as ${who.email}`, `This copy is for @${who.domain} accounts.`);
+      } catch (err) {
+        logger.error(`[web] Sign-in refused: ${err.message}`);
+        broadcast({ type: 'auth-error', message: String(err.message || err) });
+        finish(failureTitle, String(err.message || err));
+      }
+
       return;
     }
 
@@ -1038,7 +1082,7 @@ const server = http.createServer(async (req, res) => {
       finish('Google Drive connected', 'Screenshots you paste will now upload to your chosen folder.');
     } catch (err) {
       logger.error(`[web] Drive connection failed: ${err.message}`);
-      finish('Google Drive was not connected', String(err.message || err));
+      finish(failureTitle, String(err.message || err));
     }
 
     return;
@@ -1102,6 +1146,17 @@ function listen(port, attemptsLeft = 10, onReady) {
 
     // Log lines are mirrored to the page only once the server is actually up.
     logger.addSink(pushLog);
+
+    // Confirm the signed-in account still exists on every launch, so removing
+    // someone from the Workspace locks them out the next time they open this.
+    if (auth.status().signedIn) {
+      auth.revalidate().then((result) => {
+        if (!result.valid) {
+          logger.warn('[web] That Google account is no longer valid. Sign in again.');
+          broadcast({ type: 'auth', ...auth.status() });
+        }
+      });
+    }
 
     if (typeof onReady === 'function') {
       onReady(url);

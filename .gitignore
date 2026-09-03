@@ -5,6 +5,7 @@ node_modules/
 dist/
 
 # Credentials and tokens
+access.json
 drive-client.json
 drive-config.json
 
