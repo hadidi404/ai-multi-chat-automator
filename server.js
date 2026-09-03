@@ -494,21 +494,65 @@ async function beginRun({ questions, botKeys, clientName, clientSite }) {
  * @param {string} question
  * @returns {Promise<import('playwright').Locator | null>}
  */
+/**
+ * Builds a pattern for the first `wordCount` words of a question.
+ *
+ * A plain substring is too brittle to find text a site has re-typeset. Sites
+ * turn quotes curly, collapse or insert whitespace, and hyphenate across
+ * lines, so the pattern allows any whitespace between words and accepts either
+ * form of each quote character.
+ *
+ * @param {string[]} words
+ * @param {number} wordCount
+ * @returns {RegExp}
+ */
+function questionPattern(words, wordCount) {
+  const escaped = words.slice(0, wordCount).map((word) => word
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/['‘’]/g, "['‘’]")
+    .replace(/["“”]/g, '["“”]'));
+
+  return new RegExp(escaped.join('\\s+'), 'i');
+}
+
+/**
+ * Finds a question in a conversation.
+ *
+ * Tries a long match first and falls back to shorter ones. A long pattern is
+ * unambiguous but easily broken by the site's own formatting; a short one
+ * always matches something but could match the wrong message, so it is only
+ * used once the longer attempts have failed.
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} question
+ * @returns {Promise<import('playwright').Locator | null>}
+ */
 async function locateQuestion(page, question) {
-  // Long questions get truncated: the more text that has to match exactly, the
-  // more chances a site's own wrapping or ellipsis breaks it.
-  const asked = String(question || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const words = String(question || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
 
-  if (asked.length <= 12) {
+  if (words.length === 0) {
     return null;
   }
 
-  try {
-    const found = page.getByText(asked, { exact: false }).last();
-    return await found.count() > 0 ? found : null;
-  } catch {
-    return null;
+  for (const wordCount of [14, 9, 6, 4]) {
+    if (wordCount > words.length && wordCount !== 4) {
+      continue;
+    }
+
+    try {
+      // `.last()` because re-running a question leaves it in the thread more
+      // than once, and the newest is the one just asked.
+      const found = page.getByText(questionPattern(words, wordCount)).last();
+
+      if (await found.count() > 0) {
+        return found;
+      }
+    } catch {
+      // An invalid pattern for this question; the next size may still work.
+    }
   }
+
+  return null;
 }
 
 /** Marks a question in the page so it is obvious the right one is on screen. */

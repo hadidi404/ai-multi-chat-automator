@@ -148,6 +148,36 @@ function isProfileInUse() {
 }
 
 /**
+ * Maximises the browser window.
+ *
+ * --start-maximized is only a hint: Chromium restores the window state saved
+ * in the profile, so once a window has been resized by hand every later launch
+ * comes back that size. Setting the state through the protocol is not
+ * negotiable in the same way.
+ *
+ * @param {import('playwright').Page} page
+ * @returns {Promise<void>}
+ */
+async function maximizeWindow(page) {
+  if (!page || page.isClosed()) {
+    return;
+  }
+
+  try {
+    const client = await page.context().newCDPSession(page);
+
+    try {
+      const { windowId } = await client.send('Browser.getWindowForTarget');
+      await client.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'maximized' } });
+    } finally {
+      await client.detach().catch(() => {});
+    }
+  } catch {
+    // Not available on this browser; the window opens at its saved size.
+  }
+}
+
+/**
  * Returns exactly `count` usable tabs, reusing the blank tab Brave opens with
  * and closing any leftovers from a previous session.
  *
@@ -187,21 +217,21 @@ async function raiseWindow(page) {
 
   // Windows needs more. Its foreground lock stops a background process raising
   // its own window over whatever the user is looking at — the taskbar button
-  // just flashes instead. Asking the browser to restore and re-assert its
-  // bounds is a request it is allowed to honour, where bringToFront alone is
-  // not. Harmless on the other platforms.
+  // just flashes instead. Re-asserting the window state is a request the
+  // browser is allowed to honour, where bringToFront alone is not.
   try {
     const client = await page.context().newCDPSession(page);
 
     try {
       const { windowId, bounds } = await client.send('Browser.getWindowForTarget');
 
-      if (bounds && bounds.windowState === 'minimized') {
-        await client.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
-      }
+      // Re-assert whatever state it is already in. Sending a fixed 'normal'
+      // here would drag a maximised window back down to a restored one every
+      // time the grid jumped to an answer.
+      const current = bounds && bounds.windowState ? bounds.windowState : 'normal';
+      const target = current === 'minimized' ? 'maximized' : current;
 
-      // Re-asserting the state is what actually pulls the window forward.
-      await client.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+      await client.send('Browser.setWindowBounds', { windowId, bounds: { windowState: target } });
     } finally {
       await client.detach().catch(() => {});
     }
@@ -387,10 +417,10 @@ async function startRun({
   try {
     const pages = await preparePages(context, bots.length);
 
-    // Put the window in front before any question goes out, so the run is
-    // visible from the start rather than hiding behind the browser you were
-    // already using.
+    // Raise first, then size: raising re-asserts the current window state, so
+    // maximising has to be the last word.
     await raiseWindow(pages[0]);
+    await maximizeWindow(pages[0]);
 
     logger.info(`Running ${bots.length} AI bot(s) in parallel...`);
 

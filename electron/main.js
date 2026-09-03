@@ -105,7 +105,7 @@ function beginUpdateCheck() {
   autoUpdater.on('update-available', (info) => {
     showUpdateWindow();
     tellUpdateWindow(`window.setUpdateDetail(${JSON.stringify(
-      `Version ${info.version} is required. Downloading it now…`
+      `Updating to version ${info.version}…`
     )})`);
   });
 
@@ -120,9 +120,9 @@ function beginUpdateCheck() {
     // The quit handler below must not intercept this one: cancelling the quit
     // that quitAndInstall depends on would leave the installer never running.
     isInstallingUpdate = true;
-    // isSilent = false so the installer is visible; isForceRunAfter = true so
-    // the user lands back in the app rather than having to find it again.
-    setTimeout(() => autoUpdater.quitAndInstall(false, true), 800);
+    // isSilent so the installer runs without its own wizard, isForceRunAfter
+    // so the user lands back in the app rather than having to find it again.
+    setTimeout(() => autoUpdater.quitAndInstall(true, true), 800);
   });
 
   autoUpdater.on('update-not-available', startApp);
