@@ -115,14 +115,29 @@ function beginUpdateCheck() {
     );
   });
 
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('update-downloaded', async () => {
     tellUpdateWindow('window.setUpdateDetail("Installing — the app will restart.")');
+
     // The quit handler below must not intercept this one: cancelling the quit
     // that quitAndInstall depends on would leave the installer never running.
     isInstallingUpdate = true;
-    // isSilent so the installer runs without its own wizard, isForceRunAfter
-    // so the user lands back in the app rather than having to find it again.
-    setTimeout(() => autoUpdater.quitAndInstall(true, true), 800);
+
+    // The installer starts by uninstalling this version, which fails while
+    // anything still holds its files. Close the automation browser and every
+    // window first, rather than relying on the quit to do it in time.
+    await server.closeBrowser().catch(() => {});
+
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.destroy();
+      }
+    }
+
+    // isSilent stays false: a silent NSIS run does not wait for this process to
+    // release its files, which is exactly how the uninstall step fails.
+    // oneClick already reduces the installer to a progress bar, so there is no
+    // wizard either way. isForceRunAfter reopens the app when it finishes.
+    setTimeout(() => autoUpdater.quitAndInstall(false, true), 2_000);
   });
 
   autoUpdater.on('update-not-available', startApp);
