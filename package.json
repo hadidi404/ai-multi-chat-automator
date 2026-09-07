@@ -8,8 +8,8 @@
     "web": "node server.js",
     "check": "find server.js electron bots utils tools -name '*.js' -exec node --check {} +",
     "test": "npm run check",
-    "dist": "electron-builder --win",
-    "release": "electron-builder --win --publish always"
+    "dist": "node tools/require-windows.js && electron-builder --win",
+    "release": "node tools/require-windows.js && electron-builder --win --publish always"
   },
   "keywords": [],
   "author": "",

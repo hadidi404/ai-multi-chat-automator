@@ -1,0 +1,77 @@
+name: Release
+
+# Builds the Windows installer on Windows. NSIS produces its uninstaller by
+# executing the installer generator, which only happens on Windows; a macOS
+# cross-build synthesizes it instead and has shipped uninstallers that fail
+# their own integrity check.
+#
+# Publishing uploads a DRAFT release; publish it on GitHub once the run is
+# green. The verify step fails the run if the embedded uninstaller is invalid,
+# so a red run means: do not publish.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check
+        shell: bash
+        run: npm run check
+
+      # Bundled Google OAuth credentials. Gitignored, so they reach CI only as
+      # a secret; without them the app installs fine but Drive upload asks
+      # every user for credentials.
+      - name: Write drive-client.json
+        shell: bash
+        env:
+          DRIVE_CLIENT_JSON: ${{ secrets.DRIVE_CLIENT_JSON }}
+        run: |
+          if [ -n "$DRIVE_CLIENT_JSON" ]; then
+            printf '%s' "$DRIVE_CLIENT_JSON" > drive-client.json
+            echo "drive-client.json written"
+          else
+            echo "::warning::DRIVE_CLIENT_JSON secret is not set - this build ships without Drive credentials"
+          fi
+
+      - name: Build and upload draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish always
+
+      - name: Verify the embedded uninstaller
+        shell: bash
+        run: node tools/verify-nsis-uninstaller.js dist
+
+      - name: Summarize artifacts
+        shell: bash
+        run: |
+          {
+            echo "### Artifacts"
+            echo '```'
+            ls -l dist | grep -v win-unpacked || true
+            echo '```'
+            echo "### latest.yml"
+            echo '```'
+            cat dist/latest.yml
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
