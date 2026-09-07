@@ -55,6 +55,7 @@ function createWindow(url) {
 // failed check never blocks, so an offline user is not locked out.
 
 let updateWindow = null;
+let isInstallingUpdate = false;
 
 function showUpdateWindow() {
   updateWindow = new BrowserWindow({
@@ -105,13 +106,7 @@ function beginUpdateCheck() {
   // The feed comes from the publish config baked into app-update.yml at build
   // time, so there is nothing to configure here.
   autoUpdater.autoDownload = true;
-
-  // Install after this process has exited, not alongside it. quitAndInstall
-  // starts the installer and then quits, so the installer checks for a running
-  // app while this one is still shutting down and reports that it cannot be
-  // closed. Installing on quit removes the race: by the time the installer
-  // runs, there is nothing left to close.
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on('update-available', (info) => {
     showUpdateWindow();
@@ -128,13 +123,27 @@ function beginUpdateCheck() {
 
   // electron-updater has verified the download against the checksum in
   // latest.yml by this point.
-  autoUpdater.on('update-downloaded', () => {
-    tellUpdateWindow('window.setUpdateDetail("Installing \u2014 reopen the app when it closes.")');
+  autoUpdater.on('update-downloaded', async () => {
+    tellUpdateWindow('window.setUpdateDetail("Installing \u2014 the app will restart.")');
 
-    // Quitting is all that is needed: autoInstallOnAppQuit has electron-updater
-    // run the installer once this process is gone. Giving the message a moment
-    // to be read costs nothing, since nothing is waiting on it.
-    setTimeout(() => app.quit(), 1_200);
+    // The installer asks the running app to close and gives up if it does not,
+    // so everything this process owns has to be gone before it starts. Bounded
+    // throughout: a browser that never answers must not stall the update.
+    isInstallingUpdate = true;
+    await server.terminateChildren().catch(() => {});
+
+    // Renderers keep the process alive, and they run from the folder the
+    // installer replaces. window-all-closed is guarded below so this does not
+    // quit the app before the installer has been started.
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.destroy();
+      }
+    }
+
+    // Handing back to the event loop first lets Electron finish tearing those
+    // windows down, so quitAndInstall is not racing its own renderers.
+    setImmediate(() => autoUpdater.quitAndInstall(true, true));
   });
 
   autoUpdater.on('update-not-available', startApp);
@@ -163,6 +172,13 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  // The update destroys the windows on purpose, and quitAndInstall does the
+  // quitting from there. Quitting here would end the process before the
+  // installer had been started.
+  if (isInstallingUpdate) {
+    return;
+  }
+
   app.quit();
 });
 

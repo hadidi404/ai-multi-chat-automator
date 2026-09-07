@@ -773,6 +773,49 @@ async function stopRun() {
   setState({ message: 'Stopping...' });
 }
 
+/**
+ * Ends every process this app started, without waiting indefinitely for any of
+ * them.
+ *
+ * Used before an installer replaces the app's files: the installer asks the
+ * running app to close and gives up if it does not, so shutdown has to be
+ * bounded. closeBrowser cannot be used for this — it waits on a browser that
+ * may never answer.
+ *
+ * @returns {Promise<void>}
+ */
+async function terminateChildren() {
+  stopRequested = true;
+  rejectAllManualSteps('Updating');
+  setManualStepHandler(null);
+
+  // The sign-in window is detached and outlives this process unless killed.
+  // SIGKILL rather than SIGTERM: there is no session left worth saving, and a
+  // browser that ignores the polite signal would hold everything up.
+  if (loginChild) {
+    const child = loginChild;
+    loginChild = null;
+
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
+
+  if (activeContext) {
+    const context = activeContext;
+    activeContext = null;
+
+    await Promise.race([
+      context.close().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 4_000)),
+    ]);
+  }
+
+  activePages.clear();
+}
+
 async function closeBrowser() {
   const wasLogin = state.status === 'login';
 
@@ -1319,4 +1362,4 @@ if (require.main === module) {
   listen(DEFAULT_PORT);
 }
 
-module.exports = { listen, closeBrowser, setYieldForeground, DEFAULT_PORT };
+module.exports = { listen, closeBrowser, terminateChildren, setYieldForeground, DEFAULT_PORT };
