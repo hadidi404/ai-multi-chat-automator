@@ -169,18 +169,13 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-// Closing the window must take the automation browser with it, or it keeps
-// holding the profile and the next launch cannot use it.
-app.on('before-quit', async (event) => {
-  // Never stand in the way of the installer; there is no run to tidy up
-  // anyway, since the app has not started yet when an update is applied.
-  if (app.isQuitting || isInstallingUpdate) {
-    return;
-  }
-
-  event.preventDefault();
-  app.isQuitting = true;
-
-  await server.closeBrowser().catch(() => {});
-  app.quit();
+// Closing the app should take the automation browser with it, or it keeps
+// holding the profile.
+//
+// Started, not awaited, and the quit is never cancelled. Cancelling it to wait
+// for the browser meant an unresponsive browser left this process alive with
+// no window: invisible to the user, and the reason an installer would later
+// report that the app could not be closed.
+app.on('before-quit', () => {
+  server.closeBrowser().catch(() => {});
 });
