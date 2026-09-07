@@ -55,7 +55,6 @@ function createWindow(url) {
 // failed check never blocks, so an offline user is not locked out.
 
 let updateWindow = null;
-let isInstallingUpdate = false;
 
 function showUpdateWindow() {
   updateWindow = new BrowserWindow({
@@ -106,7 +105,13 @@ function beginUpdateCheck() {
   // The feed comes from the publish config baked into app-update.yml at build
   // time, so there is nothing to configure here.
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = false;
+
+  // Install after this process has exited, not alongside it. quitAndInstall
+  // starts the installer and then quits, so the installer checks for a running
+  // app while this one is still shutting down and reports that it cannot be
+  // closed. Installing on quit removes the race: by the time the installer
+  // runs, there is nothing left to close.
+  autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('update-available', (info) => {
     showUpdateWindow();
@@ -124,13 +129,12 @@ function beginUpdateCheck() {
   // electron-updater has verified the download against the checksum in
   // latest.yml by this point.
   autoUpdater.on('update-downloaded', () => {
-    tellUpdateWindow('window.setUpdateDetail("Installing \u2014 the app will restart.")');
+    tellUpdateWindow('window.setUpdateDetail("Installing \u2014 reopen the app when it closes.")');
 
-    // Marks the quit as ours so the handler below does not intercept it.
-    // Everything after this is electron-updater's job: it closes the app,
-    // runs the installer, and starts the new version.
-    isInstallingUpdate = true;
-    autoUpdater.quitAndInstall(false, true);
+    // Quitting is all that is needed: autoInstallOnAppQuit has electron-updater
+    // run the installer once this process is gone. Giving the message a moment
+    // to be read costs nothing, since nothing is waiting on it.
+    setTimeout(() => app.quit(), 1_200);
   });
 
   autoUpdater.on('update-not-available', startApp);
@@ -159,13 +163,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  // During an update the windows close on the way to quitAndInstall, which is
-  // what must do the quitting: quitting here instead would end the process
-  // before the installer was ever started.
-  if (isInstallingUpdate) {
-    return;
-  }
-
   app.quit();
 });
 
