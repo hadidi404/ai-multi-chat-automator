@@ -25,6 +25,7 @@ const QUESTIONS_FILE = dataPath('questions.txt');
 const SCREENSHOT_DIR = dataPath('screenshots');
 const MAX_BODY_BYTES = 1_000_000;
 const LOG_HISTORY_LIMIT = 500;
+const APP_VERSION = require('./package.json').version;
 
 const shouldOpenBrowser = !process.argv.includes('--no-open');
 const MAX_IMAGE_BYTES = 12_000_000;
@@ -924,6 +925,13 @@ function serveEvents(req, res) {
 }
 
 async function handleApi(req, res, pathname) {
+  // Above the sign-in gate: knowing which build someone is running is the
+  // first thing worth asking when something misbehaves, signed in or not.
+  if (req.method === 'GET' && pathname === '/api/version') {
+    sendJson(res, 200, { version: APP_VERSION });
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/api/auth/status') {
     sendJson(res, 200, auth.status());
     return;

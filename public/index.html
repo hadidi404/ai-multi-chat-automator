@@ -291,6 +291,9 @@
   .log .debug { color: #8891a0; }
 
   .foot { color: var(--muted); font-size: 12px; text-align: center; }
+  /* Sits apart from the sentence beside it: it is a fact about the build, not
+     part of the prose. */
+  .version { display: block; margin-top: 4px; opacity: .75; }
 
   /* Sign-in gate. Opaque rather than dimmed: the app behind it is not usable
      yet, and showing it greyed out invites clicking at it. */
@@ -464,7 +467,10 @@
     <pre class="log" id="log"></pre>
   </div>
 
-  <p class="foot">Runs entirely on this computer. Nothing is uploaded anywhere.</p>
+  <p class="foot">
+    Runs entirely on this computer. Nothing is uploaded anywhere.
+    <span class="version" id="version"></span>
+  </p>
 </div>
 
 <script>
@@ -474,6 +480,7 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     gate: $('gate'), gateSignIn: $('gateSignIn'), gateHint: $('gateHint'), gateError: $('gateError'),
+    version: $('version'),
     questions: $('questions'), qcount: $('qcount'), aiGrid: $('aiGrid'),
     clientName: $('clientName'), clientSite: $('clientSite'),
     login: $('login'), runSelected: $('runSelected'), stop: $('stop'), close: $('close'),
@@ -1582,6 +1589,11 @@
   }
 
   (async () => {
+    fetch('/api/version')
+      .then((r) => r.json())
+      .then(({ version }) => { els.version.textContent = `Version ${version}`; })
+      .catch(() => {});
+
     const auth = await fetch('/api/auth/status').then((r) => r.json());
     applyAuth(auth);
 
