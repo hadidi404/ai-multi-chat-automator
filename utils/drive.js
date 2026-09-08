@@ -21,6 +21,10 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const UPLOAD_ENDPOINT = 'https://www.googleapis.com/upload/drive/v3/files';
 const FILES_ENDPOINT = 'https://www.googleapis.com/drive/v3/files';
 
+/** Cached access token — short lived, never written to disk. */
+let accessToken = null;
+let accessTokenExpiry = 0;
+
 function readConfig() {
   return readJson(CONFIG_FILE);
 }

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "web": "node server.js",
-    "check": "find server.js electron bots utils tools -name '*.js' -exec node --check {} +",
+    "check": "find server.js electron bots utils tools -name '*.js' -exec node --check {} + && node tools/check-undeclared.js",
     "test": "npm run check",
     "dist": "node tools/require-windows.js && electron-builder --win",
     "release": "node tools/require-windows.js && electron-builder --win --publish always"
