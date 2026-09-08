@@ -49,7 +49,9 @@ jobs:
             printf '%s' "$DRIVE_CLIENT_JSON" > drive-client.json
             echo "drive-client.json written"
           else
-            echo "::warning::DRIVE_CLIENT_JSON secret is not set - this build ships without Drive credentials"
+            echo "::error::DRIVE_CLIENT_JSON secret is not set. Without it the app cannot sign anyone in or connect Drive."
+            echo "Add it under Settings > Secrets and variables > Actions, using the contents of the local drive-client.json."
+            exit 1
           fi
 
       - name: Build and upload draft release
